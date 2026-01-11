@@ -24,7 +24,7 @@ PYTHON_PATH = os.path.join(BASE_DIR, "python_embeded", "python.exe")
 CACHE_DIR = os.path.join(MANAGER_DIR, "cache")
 
 # URLs
-NODE_DB_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json"
+NODE_DB_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
 WORKFLOWS_REPO_URL = "https://api.github.com/repos/jsdavid88-dsu/DSUComfyCG/contents/workflows"
 
 # Ensure cache dir exists
@@ -46,7 +46,7 @@ BUILTIN_NODES = {
 
 
 def fetch_node_db(force_refresh=False):
-    """Fetch NODE_DB from ComfyUI-Manager's custom-node-list.json"""
+    """Fetch NODE_DB from ComfyUI-Manager's extension-node-map.json"""
     global NODE_DB
     
     # Check cache first
@@ -69,23 +69,22 @@ def fetch_node_db(force_refresh=False):
         response.raise_for_status()
         data = response.json()
         
-        # Build NODE_DB: node_type -> (folder_name, git_url)
+        # extension-node-map.json format: 
+        # { "git_url": [["NodeType1", "NodeType2", ...], {"title_aux": "..."}], ... }
         NODE_DB = {}
-        for node in data.get("custom_nodes", []):
-            git_url = node.get("reference", "")
-            title = node.get("title", "")
+        for git_url, node_info in data.items():
+            if not isinstance(node_info, list) or len(node_info) < 1:
+                continue
             
             # Get folder name from git URL
-            if git_url:
-                folder_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
-                
-                # Map node names to this repo
-                for node_name in node.get("nodename_pattern", []):
-                    NODE_DB[node_name] = (folder_name, git_url)
-                
-                # Also map by title if different
-                if title and title not in NODE_DB:
-                    NODE_DB[title] = (folder_name, git_url)
+            folder_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
+            
+            # First element is list of node types
+            node_types = node_info[0] if isinstance(node_info[0], list) else []
+            
+            for node_type in node_types:
+                if isinstance(node_type, str):
+                    NODE_DB[node_type] = (folder_name, git_url)
         
         # Save to cache
         with open(NODE_DB_CACHE_FILE, 'w', encoding='utf-8') as f:
