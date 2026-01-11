@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Core Checker Module (v2 with Online DB)
+DSUComfyCG Manager - Core Checker Module (v4 - Using ComfyUI-Manager CLI)
 """
 
 import os
@@ -7,8 +7,12 @@ import sys
 import json
 import subprocess
 import logging
-import requests
 from pathlib import Path
+
+try:
+    import requests
+except ImportError:
+    requests = None
 
 logging.basicConfig(level=logging.INFO, format='[DSUComfyCG] %(message)s')
 logger = logging.getLogger("Checker")
@@ -21,18 +25,10 @@ COMFY_PATH = os.path.join(BASE_DIR, "ComfyUI")
 CUSTOM_NODES_PATH = os.path.join(COMFY_PATH, "custom_nodes")
 MODELS_PATH = os.path.join(COMFY_PATH, "models")
 PYTHON_PATH = os.path.join(BASE_DIR, "python_embeded", "python.exe")
-CACHE_DIR = os.path.join(MANAGER_DIR, "cache")
+CM_CLI_PATH = os.path.join(CUSTOM_NODES_PATH, "ComfyUI-Manager", "cm-cli.py")
 
-# URLs
-NODE_DB_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
+# GitHub API for workflow sync
 WORKFLOWS_REPO_URL = "https://api.github.com/repos/jsdavid88-dsu/DSUComfyCG/contents/workflows"
-
-# Ensure cache dir exists
-Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
-
-# Global NODE_DB (loaded dynamically)
-NODE_DB = {}
-NODE_DB_CACHE_FILE = os.path.join(CACHE_DIR, "node_db_cache.json")
 
 # Built-in nodes (never need installation)
 BUILTIN_NODES = {
@@ -42,123 +38,100 @@ BUILTIN_NODES = {
     "ConditioningSetArea", "LatentUpscale", "LatentUpscaleBy", "ImageScale",
     "ImageScaleBy", "CLIPLoader", "DualCLIPLoader", "VAELoader", "UNETLoader",
     "ControlNetLoader", "ControlNetApplyAdvanced", "Note", "Reroute", "PrimitiveNode",
+    "SetLatentNoiseMask", "LatentComposite", "MaskToImage", "ImageToMask",
+    "SolidMask", "InvertMask", "CropMask", "FeatherMask", "GrowMask",
+    "ConditioningSetMask", "ConditioningConcat", "CLIPVisionLoader", "CLIPVisionEncode",
+    "unCLIPConditioning", "GLIGENLoader", "GLIGENTextBoxApply", "InpaintModelConditioning",
+    "ControlNetApply", "LoadImageMask", "ImagePadForOutpaint", "ImageCompositeMasked",
+    "MaskComposite", "ImageBlend", "PorterDuffImageComposite", "SplitImageWithAlpha",
+    "JoinImageWithAlpha", "ImageBatch", "RebatchLatents", "RebatchImages",
 }
 
 
-def fetch_node_db(force_refresh=False):
-    """Fetch NODE_DB from ComfyUI-Manager's extension-node-map.json"""
-    global NODE_DB
+def run_cm_cli(command, *args):
+    """Run ComfyUI-Manager CLI command."""
+    if not os.path.exists(CM_CLI_PATH):
+        logger.error("ComfyUI-Manager not found!")
+        return None, "ComfyUI-Manager not installed"
     
-    # Check cache first
-    if not force_refresh and os.path.exists(NODE_DB_CACHE_FILE):
-        try:
-            cache_age = os.path.getmtime(NODE_DB_CACHE_FILE)
-            import time
-            # Use cache if less than 24 hours old
-            if time.time() - cache_age < 86400:
-                with open(NODE_DB_CACHE_FILE, 'r', encoding='utf-8') as f:
-                    NODE_DB = json.load(f)
-                    logger.info(f"Loaded NODE_DB from cache ({len(NODE_DB)} entries)")
-                    return True
-        except:
-            pass
-    
+    cmd = [PYTHON_PATH, CM_CLI_PATH, command] + list(args)
     try:
-        logger.info("Fetching NODE_DB from ComfyUI-Manager...")
-        response = requests.get(NODE_DB_URL, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-        
-        # extension-node-map.json format: 
-        # { "git_url": [["NodeType1", "NodeType2", ...], {"title_aux": "..."}], ... }
-        NODE_DB = {}
-        for git_url, node_info in data.items():
-            if not isinstance(node_info, list) or len(node_info) < 1:
-                continue
-            
-            # Get folder name from git URL
-            folder_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
-            
-            # First element is list of node types
-            node_types = node_info[0] if isinstance(node_info[0], list) else []
-            
-            for node_type in node_types:
-                if isinstance(node_type, str):
-                    NODE_DB[node_type] = (folder_name, git_url)
-        
-        # Save to cache
-        with open(NODE_DB_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(NODE_DB, f)
-        
-        logger.info(f"Updated NODE_DB with {len(NODE_DB)} entries")
-        return True
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=BASE_DIR,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"}
+        )
+        return result.stdout, result.stderr
+    except subprocess.TimeoutExpired:
+        return None, "Command timed out"
     except Exception as e:
-        logger.error(f"Failed to fetch NODE_DB: {e}")
-        # Try loading from cache as fallback
-        if os.path.exists(NODE_DB_CACHE_FILE):
-            try:
-                with open(NODE_DB_CACHE_FILE, 'r', encoding='utf-8') as f:
-                    NODE_DB = json.load(f)
-                logger.info(f"Using cached NODE_DB ({len(NODE_DB)} entries)")
-                return True
-            except:
-                pass
-        return False
+        return None, str(e)
 
 
-def fetch_workflow_list():
-    """Fetch list of workflows from GitHub repo"""
-    try:
-        response = requests.get(WORKFLOWS_REPO_URL, timeout=15)
-        response.raise_for_status()
-        files = response.json()
-        
-        workflows = []
-        for f in files:
-            if f.get("name", "").endswith(".json"):
-                workflows.append({
-                    "name": f["name"],
-                    "download_url": f.get("download_url"),
-                    "sha": f.get("sha")
-                })
-        return workflows
-    except Exception as e:
-        logger.error(f"Failed to fetch workflow list: {e}")
+def get_installed_nodes():
+    """Get list of installed custom nodes using cm-cli."""
+    stdout, stderr = run_cm_cli("show", "installed")
+    if stdout:
+        # Parse the output
+        installed = []
+        for line in stdout.strip().split('\n'):
+            if line.strip() and not line.startswith('#'):
+                installed.append(line.strip())
+        return installed
+    return []
+
+
+def find_node_package(node_type):
+    """Find which package provides a node type using cm-cli."""
+    # Try searching for the node
+    stdout, stderr = run_cm_cli("show", "node", node_type)
+    if stdout and "not found" not in stdout.lower():
+        # Parse package info from output
+        for line in stdout.strip().split('\n'):
+            if 'http' in line.lower() or 'github' in line.lower():
+                return line.strip()
+    return None
+
+
+def install_node_by_url(git_url):
+    """Install a node package using cm-cli."""
+    stdout, stderr = run_cm_cli("install", git_url)
+    if stderr and "error" in stderr.lower():
+        return False, stderr
+    return True, stdout or "Installed successfully"
+
+
+def check_missing_nodes_for_workflow(workflow_path):
+    """Use cm-cli to check missing nodes for a workflow."""
+    if not os.path.exists(workflow_path):
         return []
-
-
-def sync_workflows():
-    """Sync workflows from GitHub to local folder"""
-    Path(WORKFLOWS_DIR).mkdir(parents=True, exist_ok=True)
     
-    remote_workflows = fetch_workflow_list()
-    if not remote_workflows:
-        return 0, 0
+    stdout, stderr = run_cm_cli("deps-in-workflow", "--workflow", workflow_path)
     
-    synced = 0
-    skipped = 0
+    missing = []
+    if stdout:
+        # Parse missing nodes from output
+        in_missing_section = False
+        for line in stdout.strip().split('\n'):
+            line = line.strip()
+            if 'missing' in line.lower():
+                in_missing_section = True
+                continue
+            if in_missing_section and line:
+                if line.startswith('-') or line.startswith('*'):
+                    missing.append(line.lstrip('-* ').strip())
+                elif ':' in line:
+                    # Format: "NodeType: package_url"
+                    parts = line.split(':', 1)
+                    missing.append({
+                        "node": parts[0].strip(),
+                        "package": parts[1].strip() if len(parts) > 1 else None
+                    })
     
-    for wf in remote_workflows:
-        local_path = os.path.join(WORKFLOWS_DIR, wf["name"])
-        
-        # Check if already exists (simple check, could use sha for smarter sync)
-        if os.path.exists(local_path):
-            skipped += 1
-            continue
-        
-        # Download
-        try:
-            if wf.get("download_url"):
-                response = requests.get(wf["download_url"], timeout=30)
-                response.raise_for_status()
-                with open(local_path, 'wb') as f:
-                    f.write(response.content)
-                synced += 1
-                logger.info(f"Downloaded: {wf['name']}")
-        except Exception as e:
-            logger.error(f"Failed to download {wf['name']}: {e}")
-    
-    return synced, skipped
+    return missing
 
 
 def scan_workflows():
@@ -192,22 +165,17 @@ def parse_workflow(filename):
         
         for node in nodes:
             if isinstance(node, dict):
-                node_type = node.get("type")
+                node_type = node.get("type") or node.get("class_type")
                 if node_type:
                     node_types.add(node_type)
                 
-                # Also check class_type for API format
-                class_type = node.get("class_type")
-                if class_type:
-                    node_types.add(class_type)
-                
                 # Extract model names
-                if "widgets_values" in node and node["widgets_values"]:
-                    for val in node["widgets_values"]:
-                        if isinstance(val, str):
-                            lower = val.lower()
-                            if lower.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin')):
-                                model_names.add(val)
+                widgets = node.get("widgets_values") or []
+                for val in widgets:
+                    if isinstance(val, str):
+                        lower = val.lower()
+                        if lower.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf')):
+                            model_names.add(val)
     except Exception as e:
         logger.error(f"Failed to parse {filename}: {e}")
     
@@ -215,47 +183,29 @@ def parse_workflow(filename):
 
 
 def check_node_installed(node_type):
-    """Check if a node type is installed. Returns (installed, folder_name, git_url)."""
+    """Check if a node type is installed. Returns (installed, folder_name, install_cmd)."""
     import re
     
     # Check if builtin
     if node_type in BUILTIN_NODES:
         return True, "Builtin", None
     
-    # Direct match in NODE_DB
-    if node_type in NODE_DB:
-        folder_name, git_url = NODE_DB[node_type]
-        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
-        return os.path.exists(node_path), folder_name, git_url
-    
-    # Try normalized name (remove parentheses suffix like "(rgthree)")
+    # Normalize name (remove parentheses suffix)
     normalized = re.sub(r'\s*\([^)]+\)\s*$', '', node_type).strip()
-    if normalized != node_type and normalized in NODE_DB:
-        folder_name, git_url = NODE_DB[normalized]
+    
+    # Try to find package using cm-cli
+    package_url = find_node_package(normalized)
+    if package_url:
+        folder_name = package_url.rstrip('/').split('/')[-1].replace('.git', '')
         node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
-        return os.path.exists(node_path), folder_name, git_url
+        return os.path.exists(node_path), folder_name, package_url
     
-    # Try extracting package name from parentheses (e.g., "Any Switch (rgthree)" -> rgthree)
-    match = re.search(r'\(([^)]+)\)', node_type)
-    if match:
-        package_hint = match.group(1).lower()
-        # Search for folder containing this hint
-        if os.path.exists(CUSTOM_NODES_PATH):
-            for folder in os.listdir(CUSTOM_NODES_PATH):
-                if package_hint in folder.lower().replace('-', '').replace('_', ''):
-                    # Check if installed
-                    node_path = os.path.join(CUSTOM_NODES_PATH, folder)
-                    # Try to find git URL from NODE_DB by folder name
-                    for k, v in NODE_DB.items():
-                        if v[0] == folder:
-                            return os.path.exists(node_path), folder, v[1]
-                    return os.path.exists(node_path), folder, None
-    
-    # Try to find by scanning custom_nodes folders
+    # Fallback: scan custom_nodes folders
     if os.path.exists(CUSTOM_NODES_PATH):
+        search_term = normalized.lower().replace('_', '').replace(' ', '')
         for folder in os.listdir(CUSTOM_NODES_PATH):
-            # Simple heuristic: check if node_type appears in folder name
-            if node_type.lower().replace('_', '') in folder.lower().replace('-', '').replace('_', ''):
+            folder_lower = folder.lower().replace('-', '').replace('_', '')
+            if search_term in folder_lower or folder_lower in search_term:
                 return True, folder, None
     
     return False, "Unknown", None
@@ -278,17 +228,17 @@ def check_workflow_dependencies(filename):
     seen_folders = set()
     
     for nt in node_types:
-        installed, folder, url = check_node_installed(nt)
+        installed, folder, install_cmd = check_node_installed(nt)
         
         # Deduplicate by folder
-        if folder not in seen_folders or folder == "Unknown":
+        if folder not in seen_folders or folder in ("Unknown", "Builtin"):
             nodes_status.append({
                 "type": nt,
                 "folder": folder,
                 "installed": installed,
-                "url": url
+                "url": install_cmd
             })
-            if folder != "Unknown":
+            if folder not in ("Unknown", "Builtin"):
                 seen_folders.add(folder)
     
     models_status = []
@@ -313,15 +263,63 @@ def check_workflow_dependencies(filename):
     }
 
 
+def install_node(git_url):
+    """Install a custom node."""
+    if not git_url:
+        return False, "No URL provided"
+    
+    # Use cm-cli if available
+    if os.path.exists(CM_CLI_PATH):
+        return install_node_by_url(git_url)
+    
+    # Fallback to direct git clone
+    repo_name = git_url.rstrip('/').split("/")[-1].replace(".git", "")
+    target_path = os.path.join(CUSTOM_NODES_PATH, repo_name)
+    
+    if os.path.exists(target_path):
+        return True, f"{repo_name} already exists"
+    
+    try:
+        subprocess.check_call(
+            ["git", "clone", "--depth", "1", git_url, target_path],
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+        )
+        
+        # Install requirements
+        req_file = os.path.join(target_path, "requirements.txt")
+        if os.path.exists(req_file) and os.path.getsize(req_file) > 0:
+            subprocess.run(
+                [PYTHON_PATH, "-m", "pip", "install", "-r", req_file, "--quiet"],
+                capture_output=True
+            )
+        
+        return True, f"Installed {repo_name}"
+    except Exception as e:
+        return False, str(e)
+
+
+def install_missing_for_workflow(workflow_file):
+    """Install all missing nodes for a workflow using cm-cli."""
+    if not os.path.exists(CM_CLI_PATH):
+        return False, "ComfyUI-Manager not found"
+    
+    workflow_path = os.path.join(WORKFLOWS_DIR, workflow_file)
+    stdout, stderr = run_cm_cli("install-deps", "--workflow", workflow_path)
+    
+    if stderr and "error" in stderr.lower():
+        return False, stderr
+    return True, stdout or "Dependencies installed"
+
+
 def get_system_status():
     """Get system information."""
     status = {
         "comfyui_installed": os.path.exists(COMFY_PATH),
         "python_installed": os.path.exists(PYTHON_PATH),
+        "cm_cli_available": os.path.exists(CM_CLI_PATH),
         "python_version": None,
         "cuda_available": False,
         "gpu_name": None,
-        "node_db_size": len(NODE_DB)
     }
     
     if status["python_installed"]:
@@ -350,33 +348,44 @@ def get_system_status():
     return status
 
 
-def install_node(git_url):
-    """Install a custom node from git URL."""
-    if not git_url:
-        return False, "No URL provided"
+def sync_workflows():
+    """Sync workflows from GitHub to local folder."""
+    if not requests:
+        return 0, 0
     
-    repo_name = git_url.rstrip('/').split("/")[-1].replace(".git", "")
-    target_path = os.path.join(CUSTOM_NODES_PATH, repo_name)
-    
-    if os.path.exists(target_path):
-        return True, f"{repo_name} already exists"
+    Path(WORKFLOWS_DIR).mkdir(parents=True, exist_ok=True)
     
     try:
-        subprocess.check_call(["git", "clone", "--depth", "1", git_url, target_path])
+        response = requests.get(WORKFLOWS_REPO_URL, timeout=15)
+        response.raise_for_status()
+        files = response.json()
+    except:
+        return 0, 0
+    
+    synced = 0
+    skipped = 0
+    
+    for f in files:
+        if not f.get("name", "").endswith(".json"):
+            continue
         
-        # Install requirements
-        req_file = os.path.join(target_path, "requirements.txt")
-        if os.path.exists(req_file) and os.path.getsize(req_file) > 0:
-            subprocess.check_call([PYTHON_PATH, "-m", "uv", "pip", "install", "-r", req_file, "--no-cache"])
+        local_path = os.path.join(WORKFLOWS_DIR, f["name"])
         
-        # Run install.py
-        install_py = os.path.join(target_path, "install.py")
-        if os.path.exists(install_py):
-            subprocess.check_call([PYTHON_PATH, install_py])
+        if os.path.exists(local_path):
+            skipped += 1
+            continue
         
-        return True, f"Installed {repo_name}"
-    except Exception as e:
-        return False, str(e)
+        try:
+            if f.get("download_url"):
+                response = requests.get(f["download_url"], timeout=30)
+                response.raise_for_status()
+                with open(local_path, 'wb') as file:
+                    file.write(response.content)
+                synced += 1
+        except:
+            pass
+    
+    return synced, skipped
 
 
 def run_comfyui():
@@ -390,7 +399,3 @@ def run_comfyui():
     except Exception as e:
         logger.error(f"Failed to start ComfyUI: {e}")
         return False
-
-
-# Initialize NODE_DB on module load
-fetch_node_db()

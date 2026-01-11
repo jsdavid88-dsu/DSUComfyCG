@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Main Window UI (v3 with Startup Checks)
+DSUComfyCG Manager - Main Window UI (v4 - Using ComfyUI-Manager CLI)
 """
 
 import sys
@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor, QFont
 
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
-    install_node, run_comfyui, fetch_node_db, sync_workflows, NODE_DB
+    install_node, run_comfyui, sync_workflows, install_missing_for_workflow
 )
 
 
@@ -29,16 +29,16 @@ class StartupWorker(QThread):
     
     def run(self):
         results = {
-            "node_db_count": 0,
+            "cm_cli_available": False,
             "workflows_synced": 0,
             "workflows_skipped": 0,
             "total_workflows": 0
         }
         
-        # Step 1: Fetch NODE_DB
-        self.progress.emit("Updating NODE_DB from ComfyUI-Manager...")
-        fetch_node_db(force_refresh=False)
-        results["node_db_count"] = len(NODE_DB)
+        # Step 1: Check ComfyUI-Manager CLI
+        self.progress.emit("Checking ComfyUI-Manager CLI...")
+        status = get_system_status()
+        results["cm_cli_available"] = status.get("cm_cli_available", False)
         
         # Step 2: Sync workflows
         self.progress.emit("Syncing workflows from GitHub...")
@@ -233,10 +233,10 @@ class ManagerWindow(QMainWindow):
         self.install_btn.clicked.connect(self.install_all_missing)
         layout.addWidget(self.install_btn)
         
-        self.update_db_btn = QPushButton("🔄 Update NODE_DB")
-        self.update_db_btn.setObjectName("secondaryBtn")
-        self.update_db_btn.clicked.connect(self.update_node_db)
-        layout.addWidget(self.update_db_btn)
+        self.install_workflow_btn = QPushButton("🔧 Install via CM-CLI")
+        self.install_workflow_btn.setObjectName("secondaryBtn")
+        self.install_workflow_btn.clicked.connect(self.install_workflow_deps)
+        layout.addWidget(self.install_workflow_btn)
         
         layout.addStretch()
         
@@ -483,7 +483,8 @@ class ManagerWindow(QMainWindow):
         self.refresh_workflows()
         self.update_system_status()
         
-        msg = f"Ready! NODE_DB: {results['node_db_count']} entries | "
+        cm_status = "Available" if results['cm_cli_available'] else "Not Found"
+        msg = f"Ready! CM-CLI: {cm_status} | "
         msg += f"Workflows: {results['total_workflows']} ({results['workflows_synced']} synced)"
         self.status_bar.showMessage(msg)
     
@@ -502,16 +503,25 @@ class ManagerWindow(QMainWindow):
         self.refresh_workflows()
         self.status_bar.showMessage(f"Synced {synced} new workflow(s), {skipped} already exist")
     
-    def update_node_db(self):
-        self.status_bar.showMessage("Updating NODE_DB...")
-        QApplication.processEvents()
-        fetch_node_db(force_refresh=True)
-        self.status_bar.showMessage(f"NODE_DB updated: {len(NODE_DB)} entries")
-        
-        # Refresh current view
+    def install_workflow_deps(self):
+        """Install dependencies for current workflow using ComfyUI-Manager CLI."""
         current = self.workflow_list.currentItem()
-        if current:
-            self.check_dependencies(current.data(Qt.UserRole))
+        if not current:
+            QMessageBox.information(self, "Info", "Select a workflow first!")
+            return
+        
+        filename = current.data(Qt.UserRole)
+        self.status_bar.showMessage(f"Installing deps for {filename} via CM-CLI...")
+        QApplication.processEvents()
+        
+        success, msg = install_missing_for_workflow(filename)
+        if success:
+            self.status_bar.showMessage(f"Done: {msg[:50]}...")
+        else:
+            QMessageBox.warning(self, "Error", msg)
+        
+        # Refresh view
+        self.check_dependencies(filename)
     
     def on_workflow_selected(self, current, previous):
         if not current:
@@ -626,7 +636,10 @@ class ManagerWindow(QMainWindow):
         if status["cuda_available"] and status["gpu_name"]:
             parts.append(f"🎮 {status['gpu_name']}")
         
-        parts.append(f"NODE_DB: {status['node_db_size']}")
+        if status.get("cm_cli_available"):
+            parts.append("CM-CLI: ✅")
+        else:
+            parts.append("CM-CLI: ❌")
         
         self.system_info.setText(" | ".join(parts))
     
