@@ -216,15 +216,40 @@ def parse_workflow(filename):
 
 def check_node_installed(node_type):
     """Check if a node type is installed. Returns (installed, folder_name, git_url)."""
+    import re
+    
     # Check if builtin
     if node_type in BUILTIN_NODES:
         return True, "Builtin", None
     
-    # Check in NODE_DB
+    # Direct match in NODE_DB
     if node_type in NODE_DB:
         folder_name, git_url = NODE_DB[node_type]
         node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
         return os.path.exists(node_path), folder_name, git_url
+    
+    # Try normalized name (remove parentheses suffix like "(rgthree)")
+    normalized = re.sub(r'\s*\([^)]+\)\s*$', '', node_type).strip()
+    if normalized != node_type and normalized in NODE_DB:
+        folder_name, git_url = NODE_DB[normalized]
+        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+        return os.path.exists(node_path), folder_name, git_url
+    
+    # Try extracting package name from parentheses (e.g., "Any Switch (rgthree)" -> rgthree)
+    match = re.search(r'\(([^)]+)\)', node_type)
+    if match:
+        package_hint = match.group(1).lower()
+        # Search for folder containing this hint
+        if os.path.exists(CUSTOM_NODES_PATH):
+            for folder in os.listdir(CUSTOM_NODES_PATH):
+                if package_hint in folder.lower().replace('-', '').replace('_', ''):
+                    # Check if installed
+                    node_path = os.path.join(CUSTOM_NODES_PATH, folder)
+                    # Try to find git URL from NODE_DB by folder name
+                    for k, v in NODE_DB.items():
+                        if v[0] == folder:
+                            return os.path.exists(node_path), folder, v[1]
+                    return os.path.exists(node_path), folder, None
     
     # Try to find by scanning custom_nodes folders
     if os.path.exists(CUSTOM_NODES_PATH):
