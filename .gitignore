@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# After install (don't track installed files)
+DSUComfyCG/python_embeded/
+DSUComfyCG/ComfyUI/
+DSUComfyCG/models/
+DSUComfyCG/processed_workflows.txt
+
+# Logs
+*.log

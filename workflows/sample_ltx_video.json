@@ -1,0 +1,47 @@
+{
+    "last_node_id": 3,
+    "last_link_id": 2,
+    "nodes": [
+        {
+            "id": 1,
+            "type": "LTXVLoader",
+            "pos": [
+                100,
+                100
+            ],
+            "widgets_values": [
+                "ltx_video_v2.safetensors"
+            ]
+        },
+        {
+            "id": 2,
+            "type": "VHS_VideoCombine",
+            "pos": [
+                400,
+                100
+            ],
+            "widgets_values": []
+        },
+        {
+            "id": 3,
+            "type": "CheckpointLoaderSimple",
+            "pos": [
+                100,
+                300
+            ],
+            "widgets_values": [
+                "sd_xl_base_1.0.safetensors"
+            ]
+        }
+    ],
+    "links": [
+        [
+            1,
+            1,
+            0,
+            2,
+            0,
+            "VIDEO"
+        ]
+    ]
+}
