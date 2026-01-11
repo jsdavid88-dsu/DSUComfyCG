@@ -21,20 +21,83 @@ CUSTOM_NODES_PATH = os.path.join(COMFY_PATH, "custom_nodes")
 MODELS_PATH = os.path.join(COMFY_PATH, "models")
 PYTHON_PATH = os.path.join(BASE_DIR, "python_embeded", "python.exe")
 
-# Node Database
+# Node Database (expanded)
 NODE_DB = {
-    "IPAdapterApply": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
-    "IPAdapterPlus": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
-    "VHS_VideoCombine": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
-    "VHS_LoadVideo": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
-    "ControlNetApply": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
-    "LTXVLoader": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo.git"),
-    "WanVideoSampler": ("ComfyUI-WanVideoWrapper", "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"),
+    # Built-in nodes
     "CheckpointLoaderSimple": ("Builtin", None),
     "KSampler": ("Builtin", None),
+    "KSamplerAdvanced": ("Builtin", None),
     "EmptyLatentImage": ("Builtin", None),
     "CLIPTextEncode": ("Builtin", None),
     "VAEDecode": ("Builtin", None),
+    "VAEEncode": ("Builtin", None),
+    "SaveImage": ("Builtin", None),
+    "LoadImage": ("Builtin", None),
+    "PreviewImage": ("Builtin", None),
+    "LoraLoader": ("Builtin", None),
+    "CLIPSetLastLayer": ("Builtin", None),
+    "ConditioningCombine": ("Builtin", None),
+    "ConditioningSetArea": ("Builtin", None),
+    
+    # ComfyUI-Manager
+    "ManagerMenu": ("ComfyUI-Manager", "https://github.com/Comfy-Org/ComfyUI-Manager.git"),
+    
+    # Video Helper Suite
+    "VHS_VideoCombine": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
+    "VHS_LoadVideo": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
+    "VHS_LoadVideoPath": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
+    "VHS_LoadImages": ("ComfyUI-VideoHelperSuite", "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite.git"),
+    
+    # IPAdapter
+    "IPAdapterApply": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
+    "IPAdapterModelLoader": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
+    "IPAdapterEncoder": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
+    "IPAdapterUnifiedLoader": ("ComfyUI_IPAdapter_plus", "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"),
+    
+    # ControlNet Aux
+    "ControlNetApply": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
+    "CannyEdgePreprocessor": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
+    "DepthAnythingPreprocessor": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
+    "DWPreprocessor": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
+    "LineArtPreprocessor": ("comfyui_controlnet_aux", "https://github.com/Fannovel16/comfyui_controlnet_aux.git"),
+    
+    # LTX Video
+    "LTXVLoader": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo.git"),
+    "LTXVSampler": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo.git"),
+    "LTXVConditioning": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo.git"),
+    
+    # WanVideo
+    "WanVideoSampler": ("ComfyUI-WanVideoWrapper", "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"),
+    "WanVideoModelLoader": ("ComfyUI-WanVideoWrapper", "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"),
+    "WanVideoTextEncode": ("ComfyUI-WanVideoWrapper", "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"),
+    "DownloadAndLoadWanVideoModel": ("ComfyUI-WanVideoWrapper", "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"),
+    
+    # KJNodes
+    "GetImageSizeAndCount": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes.git"),
+    "ImageBatchToImageList": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes.git"),
+    "EmptyLatentImagePresets": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes.git"),
+    
+    # Florence2
+    "Florence2Run": ("ComfyUI-Florence2", "https://github.com/kijai/ComfyUI-Florence2.git"),
+    "DownloadAndLoadFlorence2Model": ("ComfyUI-Florence2", "https://github.com/kijai/ComfyUI-Florence2.git"),
+    
+    # WAS Node Suite
+    "WAS_Image_Resize": ("was-node-suite-comfyui", "https://github.com/WASasquatch/was-node-suite-comfyui.git"),
+    "WAS_Mask_Dilate_Region": ("was-node-suite-comfyui", "https://github.com/WASasquatch/was-node-suite-comfyui.git"),
+    
+    # Impact Pack
+    "SAMLoader": ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"),
+    "SAMDetectorCombined": ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"),
+    "DetailerForEach": ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"),
+    "FaceDetailer": ("ComfyUI-Impact-Pack", "https://github.com/ltdrdata/ComfyUI-Impact-Pack.git"),
+    
+    # GGUF
+    "UnetLoaderGGUF": ("ComfyUI-GGUF", "https://github.com/city96/ComfyUI-GGUF.git"),
+    "CLIPLoaderGGUF": ("ComfyUI-GGUF", "https://github.com/city96/ComfyUI-GGUF.git"),
+    
+    # Essentials
+    "ImageResize+": ("ComfyUI_essentials", "https://github.com/cubiq/ComfyUI_essentials.git"),
+    "GetImageSize+": ("ComfyUI_essentials", "https://github.com/cubiq/ComfyUI_essentials.git"),
 }
 
 # Model Database  
