@@ -61,9 +61,15 @@ FALLBACK_NODE_DB = {
     # ComfyUI-WanAnimatePreprocess nodes
     "OnnxDetectionModelLoader": ("ComfyUI-WanAnimatePreprocess", "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"),
     "PoseAndFaceDetection": ("ComfyUI-WanAnimatePreprocess", "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"),
+    "DrawViTPose": ("ComfyUI-WanAnimatePreprocess", "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"),
     # KJNodes Get/Set nodes (different naming in workflow vs DB)
     "GetNode": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes"),
     "SetNode": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes"),
+    # ComfyUI-Easy-Use nodes
+    "easy getNode": ("ComfyUI-Easy-Use", "https://github.com/yolain/ComfyUI-Easy-Use"),
+    "easy setNode": ("ComfyUI-Easy-Use", "https://github.com/yolain/ComfyUI-Easy-Use"),
+    # comfyui-various nodes
+    "Float-🔬": ("comfyui-various", "https://github.com/jamesWalker55/comfyui-various"),
 }
 
 
