@@ -183,21 +183,26 @@ def check_node_installed(node_type):
         node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
         return os.path.exists(node_path), folder_name, git_url
     
-    # Package hint from parentheses
+    # Package hint from parentheses - search NODE_DB for matching folder
     match = re.search(r'\(([^)]+)\)', node_type)
     if match:
-        package_hint = match.group(1).lower()
+        package_hint = match.group(1).lower().replace('-', '').replace('_', '')
+        
+        # Search NODE_DB for folder containing this hint
+        for k, v in NODE_DB.items():
+            folder_name, git_url = v
+            folder_lower = folder_name.lower().replace('-', '').replace('_', '')
+            if package_hint in folder_lower:
+                node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+                return os.path.exists(node_path), folder_name, git_url
+        
+        # Also check installed folders
         if os.path.exists(CUSTOM_NODES_PATH):
             for folder in os.listdir(CUSTOM_NODES_PATH):
                 if package_hint in folder.lower().replace('-', '').replace('_', ''):
-                    # Find git URL from NODE_DB
-                    for k, v in NODE_DB.items():
-                        if v[0] == folder:
-                            node_path = os.path.join(CUSTOM_NODES_PATH, folder)
-                            return os.path.exists(node_path), folder, v[1]
                     return True, folder, None
     
-    # Heuristic folder scan
+    # Heuristic folder scan (for already installed nodes not in DB)
     if os.path.exists(CUSTOM_NODES_PATH):
         search = node_type.lower().replace('_', '').replace(' ', '')
         for folder in os.listdir(CUSTOM_NODES_PATH):
