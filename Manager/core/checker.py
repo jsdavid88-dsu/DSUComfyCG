@@ -70,6 +70,8 @@ FALLBACK_NODE_DB = {
     "easy setNode": ("ComfyUI-Easy-Use", "https://github.com/yolain/ComfyUI-Easy-Use"),
     # comfyui-various nodes
     "Float-🔬": ("comfyui-various", "https://github.com/jamesWalker55/comfyui-various"),
+    # LTX Video nodes
+    "LTXVLoader": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo"),
 }
 
 
