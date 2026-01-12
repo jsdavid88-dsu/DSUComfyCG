@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Main Window UI (v4 - Using ComfyUI-Manager CLI)
+DSUComfyCG Manager - Main Window UI (v5 - Fast and Stable)
 """
 
 import sys
@@ -11,14 +11,14 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
-    QGroupBox, QFrame, QDialog, QApplication, QTextEdit
+    QGroupBox, QFrame, QApplication
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor
 
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
-    install_node, run_comfyui, sync_workflows, install_missing_for_workflow
+    install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB
 )
 
 
@@ -29,19 +29,19 @@ class StartupWorker(QThread):
     
     def run(self):
         results = {
-            "cm_cli_available": False,
+            "node_db_count": 0,
             "workflows_synced": 0,
             "workflows_skipped": 0,
             "total_workflows": 0
         }
         
-        # Step 1: Check ComfyUI-Manager CLI
-        self.progress.emit("Checking ComfyUI-Manager CLI...")
-        status = get_system_status()
-        results["cm_cli_available"] = status.get("cm_cli_available", False)
+        # Step 1: Fetch NODE_DB
+        self.progress.emit("Loading NODE_DB...")
+        fetch_node_db(force_refresh=False)
+        results["node_db_count"] = len(NODE_DB)
         
         # Step 2: Sync workflows
-        self.progress.emit("Syncing workflows from GitHub...")
+        self.progress.emit("Syncing workflows...")
         synced, skipped = sync_workflows()
         results["workflows_synced"] = synced
         results["workflows_skipped"] = skipped
@@ -54,22 +54,10 @@ class StartupWorker(QThread):
         self.finished.emit(results)
 
 
-class InstallWorker(QThread):
-    finished = Signal(bool, str)
-    
-    def __init__(self, git_url):
-        super().__init__()
-        self.git_url = git_url
-    
-    def run(self):
-        success, message = install_node(self.git_url)
-        self.finished.emit(success, message)
-
-
 class ManagerWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🚀 DSUComfyCG Manager")
+        self.setWindowTitle("DSUComfyCG Manager")
         self.resize(1100, 750)
         self.setMinimumSize(900, 650)
         
@@ -85,13 +73,12 @@ class ManagerWindow(QMainWindow):
         header = self._create_header()
         main_layout.addWidget(header)
         
-        # Startup progress (hidden after startup)
+        # Startup progress
         self.startup_frame = self._create_startup_frame()
         main_layout.addWidget(self.startup_frame)
         
         # Main content
         splitter = QSplitter(Qt.Horizontal)
-        splitter.setObjectName("mainSplitter")
         main_layout.addWidget(splitter, stretch=1)
         
         left_panel = self._create_workflow_panel()
@@ -113,7 +100,6 @@ class ManagerWindow(QMainWindow):
         self.pending_installs = []
         self.is_ready = False
         
-        # Start startup checks
         QTimer.singleShot(100, self.run_startup_checks)
     
     def _create_header(self):
@@ -121,7 +107,7 @@ class ManagerWindow(QMainWindow):
         frame.setObjectName("headerFrame")
         layout = QHBoxLayout(frame)
         
-        title = QLabel("🚀 DSUComfyCG Manager")
+        title = QLabel("DSUComfyCG Manager")
         title.setObjectName("titleLabel")
         layout.addWidget(title)
         
@@ -139,20 +125,20 @@ class ManagerWindow(QMainWindow):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(15, 15, 15, 15)
         
-        self.startup_label = QLabel("🔄 Initializing...")
+        self.startup_label = QLabel("Initializing...")
         self.startup_label.setObjectName("startupLabel")
         self.startup_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.startup_label)
         
         self.startup_progress = QProgressBar()
-        self.startup_progress.setRange(0, 0)  # Indeterminate
+        self.startup_progress.setRange(0, 0)
         self.startup_progress.setObjectName("startupProgress")
         layout.addWidget(self.startup_progress)
         
         return frame
     
     def _create_workflow_panel(self):
-        group = QGroupBox("📁 Workflows")
+        group = QGroupBox("Workflows")
         layout = QVBoxLayout(group)
         layout.setSpacing(10)
         
@@ -162,12 +148,12 @@ class ManagerWindow(QMainWindow):
         
         btn_layout = QHBoxLayout()
         
-        sync_btn = QPushButton("🔄 Sync")
+        sync_btn = QPushButton("Sync")
         sync_btn.setObjectName("smallBtn")
         sync_btn.clicked.connect(self.sync_workflows_ui)
         btn_layout.addWidget(sync_btn)
         
-        refresh_btn = QPushButton("↻ Refresh")
+        refresh_btn = QPushButton("Refresh")
         refresh_btn.setObjectName("smallBtn")
         refresh_btn.clicked.connect(self.refresh_workflows)
         btn_layout.addWidget(refresh_btn)
@@ -177,13 +163,13 @@ class ManagerWindow(QMainWindow):
         return group
     
     def _create_dependency_panel(self):
-        group = QGroupBox("📦 Dependencies")
+        group = QGroupBox("Dependencies")
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
         
         # Nodes
         nodes_header = QHBoxLayout()
-        nodes_label = QLabel("🔧 Custom Nodes")
+        nodes_label = QLabel("Custom Nodes")
         nodes_label.setObjectName("sectionLabel")
         nodes_header.addWidget(nodes_label)
         nodes_header.addStretch()
@@ -203,7 +189,7 @@ class ManagerWindow(QMainWindow):
         
         # Models
         models_header = QHBoxLayout()
-        models_label = QLabel("🧠 Models")
+        models_label = QLabel("Models")
         models_label.setObjectName("sectionLabel")
         models_header.addWidget(models_label)
         models_header.addStretch()
@@ -224,23 +210,22 @@ class ManagerWindow(QMainWindow):
     
     def _create_action_bar(self):
         frame = QFrame()
-        frame.setObjectName("actionBar")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(0, 15, 0, 0)
         
-        self.install_btn = QPushButton("📦 Install All Missing")
+        self.install_btn = QPushButton("Install All Missing")
         self.install_btn.setObjectName("secondaryBtn")
         self.install_btn.clicked.connect(self.install_all_missing)
         layout.addWidget(self.install_btn)
         
-        self.install_workflow_btn = QPushButton("🔧 Install via CM-CLI")
-        self.install_workflow_btn.setObjectName("secondaryBtn")
-        self.install_workflow_btn.clicked.connect(self.install_workflow_deps)
-        layout.addWidget(self.install_workflow_btn)
+        self.update_db_btn = QPushButton("Refresh NODE_DB")
+        self.update_db_btn.setObjectName("secondaryBtn")
+        self.update_db_btn.clicked.connect(self.update_node_db)
+        layout.addWidget(self.update_db_btn)
         
         layout.addStretch()
         
-        self.run_btn = QPushButton("▶  Run ComfyUI")
+        self.run_btn = QPushButton("Run ComfyUI")
         self.run_btn.setObjectName("primaryBtn")
         self.run_btn.clicked.connect(self.run_comfy)
         self.run_btn.setEnabled(False)
@@ -267,13 +252,9 @@ class ManagerWindow(QMainWindow):
                 color: #00ffcc;
                 font-size: 28px;
                 font-weight: bold;
-                letter-spacing: 1px;
             }
             
-            #systemInfo {
-                color: #888;
-                font-size: 11px;
-            }
+            #systemInfo { color: #888; font-size: 11px; }
             
             #startupFrame {
                 background: rgba(0, 255, 200, 0.05);
@@ -281,10 +262,7 @@ class ManagerWindow(QMainWindow):
                 border-radius: 10px;
             }
             
-            #startupLabel {
-                color: #00ffcc;
-                font-size: 14px;
-            }
+            #startupLabel { color: #00ffcc; font-size: 14px; }
             
             #startupProgress {
                 background: #1a1a2e;
@@ -317,43 +295,10 @@ class ManagerWindow(QMainWindow):
                 color: #00ffcc;
             }
             
-            #sectionLabel {
-                color: #00ccff;
-                font-size: 13px;
-                font-weight: bold;
-            }
+            #sectionLabel { color: #00ccff; font-size: 13px; font-weight: bold; }
+            #countLabel { color: #666; font-size: 11px; }
             
-            #countLabel {
-                color: #666;
-                font-size: 11px;
-            }
-            
-            QListWidget {
-                background: rgba(10, 10, 25, 0.9);
-                color: #ffffff;
-                border: 1px solid #2a2a4e;
-                border-radius: 8px;
-                padding: 8px;
-                font-size: 13px;
-            }
-            
-            QListWidget::item {
-                padding: 12px 10px;
-                border-radius: 6px;
-                margin: 3px 0;
-            }
-            
-            QListWidget::item:selected {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #00ffcc, stop:1 #00ccff);
-                color: #000;
-            }
-            
-            QListWidget::item:hover:!selected {
-                background: rgba(0, 255, 200, 0.15);
-            }
-            
-            QTreeWidget {
+            QListWidget, QTreeWidget {
                 background: rgba(10, 10, 25, 0.9);
                 color: #ffffff;
                 border: 1px solid #2a2a4e;
@@ -361,14 +306,16 @@ class ManagerWindow(QMainWindow):
                 font-size: 12px;
             }
             
-            QTreeWidget::item {
-                padding: 10px 5px;
-                border-bottom: 1px solid #1a1a2e;
+            QListWidget::item { padding: 12px 10px; border-radius: 6px; margin: 3px 0; }
+            QListWidget::item:selected {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #00ffcc, stop:1 #00ccff);
+                color: #000;
             }
+            QListWidget::item:hover:!selected { background: rgba(0, 255, 200, 0.15); }
             
-            QTreeWidget::item:selected {
-                background: rgba(0, 255, 200, 0.2);
-            }
+            QTreeWidget::item { padding: 10px 5px; border-bottom: 1px solid #1a1a2e; }
+            QTreeWidget::item:selected { background: rgba(0, 255, 200, 0.2); }
             
             QHeaderView::section {
                 background: #1a1a3e;
@@ -394,75 +341,27 @@ class ManagerWindow(QMainWindow):
                 font-size: 15px;
                 padding: 15px 40px;
             }
-            
             #primaryBtn:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #33ffdd, stop:1 #33ddff);
             }
+            #primaryBtn:disabled { background: #333; color: #666; }
             
-            #primaryBtn:disabled {
-                background: #333;
-                color: #666;
-            }
+            #secondaryBtn { background: #2a2a4e; color: #ffffff; }
+            #secondaryBtn:hover { background: #3a3a5e; }
             
-            #secondaryBtn {
-                background: #2a2a4e;
-                color: #ffffff;
-            }
+            #smallBtn { background: #2a2a4e; color: #ccc; padding: 8px 16px; font-size: 12px; }
+            #smallBtn:hover { background: #3a3a5e; }
             
-            #secondaryBtn:hover {
-                background: #3a3a5e;
-            }
+            #installBtn { background: #ff6b6b; color: white; padding: 5px 15px; font-size: 11px; border-radius: 5px; }
+            #installBtn:hover { background: #ff8787; }
             
-            #smallBtn {
-                background: #2a2a4e;
-                color: #ccc;
-                padding: 8px 16px;
-                font-size: 12px;
-            }
+            QStatusBar { background: #0a0a1a; color: #555; border-top: 1px solid #2a2a4e; padding: 5px; }
             
-            #smallBtn:hover {
-                background: #3a3a5e;
-            }
-            
-            #installBtn {
-                background: #ff6b6b;
-                color: white;
-                padding: 5px 15px;
-                font-size: 11px;
-                border-radius: 5px;
-            }
-            
-            #installBtn:hover {
-                background: #ff8787;
-            }
-            
-            QStatusBar {
-                background: #0a0a1a;
-                color: #555;
-                border-top: 1px solid #2a2a4e;
-                padding: 5px;
-            }
-            
-            QScrollBar:vertical {
-                background: #1a1a2e;
-                width: 10px;
-                border-radius: 5px;
-            }
-            
-            QScrollBar::handle:vertical {
-                background: #3a3a5e;
-                border-radius: 5px;
-                min-height: 30px;
-            }
-            
-            QScrollBar::handle:vertical:hover {
-                background: #00ffcc;
-            }
-            
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0;
-            }
+            QScrollBar:vertical { background: #1a1a2e; width: 10px; border-radius: 5px; }
+            QScrollBar::handle:vertical { background: #3a3a5e; border-radius: 5px; min-height: 30px; }
+            QScrollBar::handle:vertical:hover { background: #00ffcc; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
         """
     
     def run_startup_checks(self):
@@ -473,7 +372,7 @@ class ManagerWindow(QMainWindow):
         self.worker.start()
     
     def on_startup_progress(self, message):
-        self.startup_label.setText(f"🔄 {message}")
+        self.startup_label.setText(message)
     
     def on_startup_finished(self, results):
         self.startup_frame.hide()
@@ -483,16 +382,14 @@ class ManagerWindow(QMainWindow):
         self.refresh_workflows()
         self.update_system_status()
         
-        cm_status = "Available" if results['cm_cli_available'] else "Not Found"
-        msg = f"Ready! CM-CLI: {cm_status} | "
-        msg += f"Workflows: {results['total_workflows']} ({results['workflows_synced']} synced)"
+        msg = f"Ready! NODE_DB: {results['node_db_count']} | Workflows: {results['total_workflows']}"
         self.status_bar.showMessage(msg)
     
     def refresh_workflows(self):
         self.workflow_list.clear()
         workflows = scan_workflows()
         for wf in workflows:
-            item = QListWidgetItem(f"📄 {wf}")
+            item = QListWidgetItem(wf)
             item.setData(Qt.UserRole, wf)
             self.workflow_list.addItem(item)
     
@@ -501,27 +398,17 @@ class ManagerWindow(QMainWindow):
         QApplication.processEvents()
         synced, skipped = sync_workflows()
         self.refresh_workflows()
-        self.status_bar.showMessage(f"Synced {synced} new workflow(s), {skipped} already exist")
+        self.status_bar.showMessage(f"Synced {synced}, skipped {skipped}")
     
-    def install_workflow_deps(self):
-        """Install dependencies for current workflow using ComfyUI-Manager CLI."""
-        current = self.workflow_list.currentItem()
-        if not current:
-            QMessageBox.information(self, "Info", "Select a workflow first!")
-            return
-        
-        filename = current.data(Qt.UserRole)
-        self.status_bar.showMessage(f"Installing deps for {filename} via CM-CLI...")
+    def update_node_db(self):
+        self.status_bar.showMessage("Refreshing NODE_DB...")
         QApplication.processEvents()
+        fetch_node_db(force_refresh=True)
+        self.status_bar.showMessage(f"NODE_DB: {len(NODE_DB)} entries")
         
-        success, msg = install_missing_for_workflow(filename)
-        if success:
-            self.status_bar.showMessage(f"Done: {msg[:50]}...")
-        else:
-            QMessageBox.warning(self, "Error", msg)
-        
-        # Refresh view
-        self.check_dependencies(filename)
+        current = self.workflow_list.currentItem()
+        if current:
+            self.check_dependencies(current.data(Qt.UserRole))
     
     def on_workflow_selected(self, current, previous):
         if not current:
@@ -547,14 +434,14 @@ class ManagerWindow(QMainWindow):
             item.setText(0, folder)
             
             if folder == "Unknown":
-                item.setText(1, "⚠️ Unknown")
+                item.setText(1, "Unknown")
                 item.setForeground(1, QColor("#ffd93d"))
             elif node["installed"]:
-                item.setText(1, "✅ Installed")
+                item.setText(1, "Installed")
                 item.setForeground(1, QColor("#00ffcc"))
                 installed_count += 1
             else:
-                item.setText(1, "❌ Missing")
+                item.setText(1, "Missing")
                 item.setForeground(1, QColor("#ff6b6b"))
                 missing_count += 1
                 if node["url"]:
@@ -567,7 +454,7 @@ class ManagerWindow(QMainWindow):
             
             self.nodes_tree.addTopLevelItem(item)
         
-        self.nodes_count.setText(f"✅ {installed_count}  ❌ {missing_count}")
+        self.nodes_count.setText(f"OK: {installed_count} / Missing: {missing_count}")
         
         # Models
         self.models_tree.clear()
@@ -581,17 +468,17 @@ class ManagerWindow(QMainWindow):
             item.setToolTip(0, name)
             
             if model["installed"]:
-                item.setText(1, "✅ Found")
+                item.setText(1, "Found")
                 item.setForeground(1, QColor("#00ffcc"))
                 found += 1
             else:
-                item.setText(1, "❌ Missing")
+                item.setText(1, "Missing")
                 item.setForeground(1, QColor("#ff6b6b"))
                 missing_m += 1
             
             self.models_tree.addTopLevelItem(item)
         
-        self.models_count.setText(f"✅ {found}  ❌ {missing_m}")
+        self.models_count.setText(f"OK: {found} / Missing: {missing_m}")
     
     def install_single(self, url):
         self.status_bar.showMessage(f"Installing {url.split('/')[-1]}...")
@@ -617,7 +504,7 @@ class ManagerWindow(QMainWindow):
         
         if reply == QMessageBox.Yes:
             for i, url in enumerate(self.pending_installs):
-                self.status_bar.showMessage(f"Installing {i+1}/{len(self.pending_installs)}: {url.split('/')[-1]}")
+                self.status_bar.showMessage(f"Installing {i+1}/{len(self.pending_installs)}...")
                 QApplication.processEvents()
                 install_node(url)
             
@@ -634,17 +521,14 @@ class ManagerWindow(QMainWindow):
             parts.append(f"Python {status['python_version']}")
         
         if status["cuda_available"] and status["gpu_name"]:
-            parts.append(f"🎮 {status['gpu_name']}")
+            parts.append(status["gpu_name"])
         
-        if status.get("cm_cli_available"):
-            parts.append("CM-CLI: ✅")
-        else:
-            parts.append("CM-CLI: ❌")
+        parts.append(f"DB: {status['node_db_size']}")
         
         self.system_info.setText(" | ".join(parts))
     
     def run_comfy(self):
         if run_comfyui():
-            QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\n👉 http://localhost:8188")
+            QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
         else:
             QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
