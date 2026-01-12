@@ -53,6 +53,17 @@ BUILTIN_NODES = {
     "ControlNetApply", "LoadImageMask", "ImagePadForOutpaint", "ImageCompositeMasked",
     "MaskComposite", "ImageBlend", "PorterDuffImageComposite", "SplitImageWithAlpha",
     "JoinImageWithAlpha", "ImageBatch", "RebatchLatents", "RebatchImages",
+    "MarkdownNote",  # Built-in note node
+}
+
+# Fallback mappings for nodes not in ComfyUI-Manager DB
+FALLBACK_NODE_DB = {
+    # ComfyUI-WanAnimatePreprocess nodes
+    "OnnxDetectionModelLoader": ("ComfyUI-WanAnimatePreprocess", "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"),
+    "PoseAndFaceDetection": ("ComfyUI-WanAnimatePreprocess", "https://github.com/kijai/ComfyUI-WanAnimatePreprocess"),
+    # KJNodes Get/Set nodes (different naming in workflow vs DB)
+    "GetNode": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes"),
+    "SetNode": ("ComfyUI-KJNodes", "https://github.com/kijai/ComfyUI-KJNodes"),
 }
 
 
@@ -173,6 +184,12 @@ def check_node_installed(node_type):
     # Direct DB match
     if node_type in NODE_DB:
         folder_name, git_url = NODE_DB[node_type]
+        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+        return os.path.exists(node_path), folder_name, git_url
+    
+    # Fallback DB match (for nodes not in ComfyUI-Manager DB)
+    if node_type in FALLBACK_NODE_DB:
+        folder_name, git_url = FALLBACK_NODE_DB[node_type]
         node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
         return os.path.exists(node_path), folder_name, git_url
     
