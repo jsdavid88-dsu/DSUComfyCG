@@ -60,6 +60,8 @@ def run_cm_cli(command, *args):
             cmd,
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=120,
             cwd=BASE_DIR,
             env={**os.environ, "PYTHONIOENCODING": "utf-8"}
@@ -326,7 +328,7 @@ def get_system_status():
         try:
             result = subprocess.run(
                 [PYTHON_PATH, "--version"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
             )
             status["python_version"] = result.stdout.strip().replace("Python ", "")
         except:
@@ -335,7 +337,7 @@ def get_system_status():
     try:
         result = subprocess.run(
             [PYTHON_PATH, "-c", "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10
         )
         lines = result.stdout.strip().split('\n')
         if len(lines) >= 1:
