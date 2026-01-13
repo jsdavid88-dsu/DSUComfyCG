@@ -514,10 +514,11 @@ def check_model_installed(model_name):
                 if f.lower() == basename.lower():
                     return True, "found", None
     
-    # Check if we have download URL in MODEL_DB
+    # Check if we have info in MODEL_DB (or from HuggingFace search)
     in_db, info = check_model_in_db(model_name)
     if in_db:
-        return False, info.get("folder", "unknown"), info.get("url")
+        # Return folder and info dict itself for download
+        return False, info.get("folder", "available"), info
     
     return False, "unknown", None
 
