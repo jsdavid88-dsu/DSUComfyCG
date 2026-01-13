@@ -77,6 +77,11 @@ FALLBACK_NODE_DB = {
     "Float-🔬": ("comfyui-various", "https://github.com/jamesWalker55/comfyui-various"),
     # LTX Video nodes
     "LTXVLoader": ("ComfyUI-LTXVideo", "https://github.com/Lightricks/ComfyUI-LTXVideo"),
+    # SAM2 / Segment Anything 2 nodes
+    "DownloadAndLoadSAM2Model": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
+    "Sam2Segmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
+    "Sam2AutoSegmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
+    "Sam2VideoSegmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
 }
 
 
