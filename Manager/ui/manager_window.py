@@ -19,7 +19,8 @@ from PySide6.QtGui import QColor, QFont
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
     install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB,
-    download_model, load_model_db, MODEL_DB
+    download_model, load_model_db, MODEL_DB,
+    check_for_updates, perform_update, get_local_version
 )
 
 
@@ -186,7 +187,33 @@ class ManagerWindow(QMainWindow):
         title.setObjectName("titleLabel")
         layout.addWidget(title)
         
+        # Version label
+        self.version_label = QLabel()
+        self.version_label.setObjectName("versionLabel")
+        self.version_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.version_label)
+        
         layout.addStretch()
+        
+        # Update button (hidden by default)
+        self.update_btn = QPushButton("🔄 Update Available")
+        self.update_btn.setObjectName("updateBtn")
+        self.update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.update_btn.clicked.connect(self.handle_update)
+        self.update_btn.hide()  # Hidden until update check
+        layout.addWidget(self.update_btn)
         
         self.system_info = QLabel()
         self.system_info.setObjectName("systemInfo")
@@ -481,6 +508,9 @@ class ManagerWindow(QMainWindow):
         self.refresh_workflows()
         self.update_system_status()
         
+        # Check for updates
+        self.check_version_updates()
+        
         # Populate queue with missing items
         self.queue_nodes = results["missing_nodes"]
         self.queue_models = results["missing_models"]
@@ -503,6 +533,63 @@ class ManagerWindow(QMainWindow):
         self.status_bar.showMessage(
             f"Ready! Nodes: {results['node_db_count']} | Models: {results['model_db_count']} | Workflows: {results['total_workflows']}"
         )
+    
+    def check_version_updates(self):
+        """Check for app updates and update UI."""
+        local_version = get_local_version()
+        self.version_label.setText(f"v{local_version}")
+        
+        # Check in background (non-blocking)
+        try:
+            update_available, local_ver, remote_ver, error = check_for_updates()
+            
+            if error:
+                self.version_label.setToolTip(f"Update check failed: {error}")
+            elif update_available:
+                self.update_btn.setText(f"🔄 Update to v{remote_ver}")
+                self.update_btn.setToolTip(f"Current: v{local_ver} → Latest: v{remote_ver}")
+                self.update_btn.show()
+                self.status_bar.showMessage(f"Update available: v{remote_ver}", 5000)
+            else:
+                self.version_label.setToolTip("You're on the latest version")
+        except Exception as e:
+            self.version_label.setToolTip(f"Update check error: {e}")
+    
+    def handle_update(self):
+        """Handle update button click."""
+        reply = QMessageBox.question(
+            self,
+            "Update DSUComfyCG",
+            "This will update DSUComfyCG Manager from GitHub.\n\n"
+            "The app will need to restart after updating.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.update_btn.setEnabled(False)
+            self.update_btn.setText("Updating...")
+            QApplication.processEvents()
+            
+            success, message = perform_update()
+            
+            if success:
+                QMessageBox.information(self, "Update Complete", message)
+                # Suggest restart
+                restart_reply = QMessageBox.question(
+                    self,
+                    "Restart Required",
+                    "Update complete! Restart the app to apply changes?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if restart_reply == QMessageBox.Yes:
+                    QApplication.quit()
+            else:
+                QMessageBox.warning(self, "Update Failed", message)
+                self.update_btn.setEnabled(True)
+                self.update_btn.setText("🔄 Update Available")
     
     def update_queue_display(self):
         self.queue_list.clear()

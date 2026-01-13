@@ -736,6 +736,110 @@ def run_comfyui():
         return False
 
 
+# =============================================================================
+# Version Control & Update System
+# =============================================================================
+
+VERSION_FILE = os.path.join(BASE_DIR, "version.txt")
+VERSION_URL = "https://raw.githubusercontent.com/jsdavid88-dsu/DSUComfyCG/main/version.txt"
+
+
+def get_local_version():
+    """Get local app version from version.txt."""
+    try:
+        if os.path.exists(VERSION_FILE):
+            with open(VERSION_FILE, 'r') as f:
+                return f.read().strip()
+        return "0.0.0"
+    except:
+        return "0.0.0"
+
+
+def get_remote_version():
+    """Get latest version from GitHub."""
+    if not requests:
+        return None, "requests module not available"
+    
+    try:
+        response = requests.get(VERSION_URL, timeout=10)
+        if response.status_code == 200:
+            return response.text.strip(), None
+        return None, f"HTTP {response.status_code}"
+    except Exception as e:
+        return None, str(e)
+
+
+def compare_versions(local, remote):
+    """Compare version strings. Returns: 1 if remote > local, 0 if equal, -1 if local > remote."""
+    try:
+        local_parts = [int(x) for x in local.split('.')]
+        remote_parts = [int(x) for x in remote.split('.')]
+        
+        # Pad to same length
+        while len(local_parts) < len(remote_parts):
+            local_parts.append(0)
+        while len(remote_parts) < len(local_parts):
+            remote_parts.append(0)
+        
+        for l, r in zip(local_parts, remote_parts):
+            if r > l:
+                return 1
+            elif l > r:
+                return -1
+        return 0
+    except:
+        return 0
+
+
+def check_for_updates():
+    """Check if updates are available. Returns (update_available, local_version, remote_version, error)."""
+    local_version = get_local_version()
+    remote_version, error = get_remote_version()
+    
+    if error:
+        return False, local_version, None, error
+    
+    if compare_versions(local_version, remote_version) > 0:
+        return True, local_version, remote_version, None
+    
+    return False, local_version, remote_version, None
+
+
+def perform_update():
+    """Perform git pull to update the app. Returns (success, message)."""
+    try:
+        # Check if git is available
+        result = subprocess.run(
+            ["git", "--version"],
+            capture_output=True,
+            text=True,
+            cwd=BASE_DIR
+        )
+        if result.returncode != 0:
+            return False, "Git is not installed"
+        
+        # Perform git pull
+        logger.info("Updating from GitHub...")
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            capture_output=True,
+            text=True,
+            cwd=BASE_DIR
+        )
+        
+        if result.returncode == 0:
+            new_version = get_local_version()
+            logger.info(f"Updated to version {new_version}")
+            return True, f"Updated to v{new_version}. Please restart the app."
+        else:
+            error_msg = result.stderr or result.stdout
+            return False, f"Git pull failed: {error_msg}"
+    
+    except Exception as e:
+        return False, f"Update failed: {str(e)}"
+
+
 # Initialize NODE_DB and MODEL_DB on module load
 fetch_node_db()
 load_model_db()
+
