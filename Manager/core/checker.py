@@ -362,13 +362,23 @@ def check_node_installed(node_type):
 
 def check_model_installed(model_name):
     """Check if a model is installed. Returns (installed, folder/status, download_url)."""
-    # Check if file exists in models folder
+    # Get basename (without subfolder like Kijai_WAN/)
     basename = os.path.basename(model_name.replace("\\", "/"))
     
     if os.path.exists(MODELS_PATH):
         for root, dirs, files in os.walk(MODELS_PATH):
-            if basename in files or model_name in files:
+            # Check exact basename match
+            if basename in files:
                 return True, "found", None
+            
+            # Check if model_name (with subfolder) exists as exact path
+            if model_name in files:
+                return True, "found", None
+            
+            # Check partial match (for files that might have slightly different names)
+            for f in files:
+                if f.lower() == basename.lower():
+                    return True, "found", None
     
     # Check if we have download URL in MODEL_DB
     in_db, info = check_model_in_db(model_name)
