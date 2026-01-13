@@ -208,14 +208,24 @@ def download_model(model_name, progress_callback=None):
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
+    # Check if file exists AND is large enough (at least 1MB for valid models)
+    MIN_FILE_SIZE = 1024 * 1024  # 1MB minimum
     if os.path.exists(target_path):
-        return True, f"Model already exists: {filename}"
+        file_size = os.path.getsize(target_path)
+        if file_size > MIN_FILE_SIZE:
+            return True, f"Model already exists: {filename} ({file_size // (1024*1024)}MB)"
+        else:
+            # Remove corrupt/incomplete file
+            logger.warning(f"Removing incomplete file: {filename} ({file_size} bytes)")
+            os.remove(target_path)
     
     # Create directory if needed
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     
     try:
-        logger.info(f"Downloading {filename} from {url[:50]}...")
+        logger.info(f"Downloading {filename}...")
+        logger.info(f"URL: {url}")
+        logger.info(f"Target: {target_path}")
         
         # Use session for better redirect handling
         session = requests.Session()
@@ -223,6 +233,11 @@ def download_model(model_name, progress_callback=None):
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
+        logger.info(f"Content-Length: {total_size} bytes ({total_size // (1024*1024)}MB)")
+        
+        if total_size == 0:
+            return False, "Server returned empty content-length"
+        
         downloaded = 0
         last_reported = 0
         
@@ -232,28 +247,32 @@ def download_model(model_name, progress_callback=None):
                     f.write(chunk)
                     downloaded += len(chunk)
                     
-                    # Report progress (cap downloaded at total_size for display)
+                    # Report progress
                     if progress_callback:
                         if total_size > 0:
                             display_downloaded = min(downloaded, total_size)
-                            # Only update every 1MB to reduce UI overhead
                             if downloaded - last_reported >= 1024 * 1024:
                                 progress_callback(display_downloaded, total_size)
                                 last_reported = downloaded
-                        else:
-                            # Unknown size - just show downloaded
-                            if downloaded - last_reported >= 1024 * 1024:
-                                progress_callback(downloaded, 0)
-                                last_reported = downloaded
         
-        logger.info(f"Downloaded {filename} to {folder_key}/")
+        # Verify downloaded file size
+        actual_size = os.path.getsize(target_path)
+        if actual_size < MIN_FILE_SIZE:
+            os.remove(target_path)
+            return False, f"Downloaded file too small ({actual_size} bytes) - likely error page"
+        
+        logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB) to {folder_key}/")
         return True, f"Downloaded {filename}"
     
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         # Clean up partial download
         if os.path.exists(target_path):
             os.remove(target_path)
-        return False, str(e)
+        return False, f"Network error: {str(e)}"
+    except Exception as e:
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        return False, f"Error: {str(e)}"
 
 
 def scan_workflows():
