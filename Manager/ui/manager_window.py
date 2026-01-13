@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Main Window UI (v5 - Fast and Stable)
+DSUComfyCG Manager - Main Window UI (v6 - With Progress Bars)
 """
 
 import sys
@@ -11,14 +11,15 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
-    QGroupBox, QFrame, QApplication
+    QGroupBox, QFrame, QApplication, QDialog
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
-    install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB
+    install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB,
+    download_model, load_model_db, MODEL_DB
 )
 
 
@@ -30,28 +31,117 @@ class StartupWorker(QThread):
     def run(self):
         results = {
             "node_db_count": 0,
+            "model_db_count": 0,
             "workflows_synced": 0,
             "workflows_skipped": 0,
             "total_workflows": 0
         }
         
-        # Step 1: Fetch NODE_DB
         self.progress.emit("Loading NODE_DB...")
         fetch_node_db(force_refresh=False)
         results["node_db_count"] = len(NODE_DB)
         
-        # Step 2: Sync workflows
+        self.progress.emit("Loading MODEL_DB...")
+        load_model_db()
+        results["model_db_count"] = len(MODEL_DB)
+        
         self.progress.emit("Syncing workflows...")
         synced, skipped = sync_workflows()
         results["workflows_synced"] = synced
         results["workflows_skipped"] = skipped
         
-        # Step 3: Count total
         workflows = scan_workflows()
         results["total_workflows"] = len(workflows)
         
         self.progress.emit("Ready!")
         self.finished.emit(results)
+
+
+class NodeInstallWorker(QThread):
+    """Background worker for node installation."""
+    progress = Signal(str, int, int)  # message, current, total
+    finished = Signal(bool, str)
+    
+    def __init__(self, urls):
+        super().__init__()
+        self.urls = urls
+    
+    def run(self):
+        total = len(self.urls)
+        for i, url in enumerate(self.urls):
+            name = url.split('/')[-1]
+            self.progress.emit(f"Installing {name}...", i + 1, total)
+            success, msg = install_node(url)
+            if not success:
+                self.finished.emit(False, msg)
+                return
+        self.finished.emit(True, f"Installed {total} node(s)")
+
+
+class ModelDownloadWorker(QThread):
+    """Background worker for model download."""
+    progress = Signal(str, int, int)  # message, downloaded_bytes, total_bytes
+    finished = Signal(bool, str)
+    
+    def __init__(self, model_name):
+        super().__init__()
+        self.model_name = model_name
+    
+    def run(self):
+        def progress_cb(downloaded, total):
+            self.progress.emit(self.model_name, downloaded, total)
+        
+        success, msg = download_model(self.model_name, progress_cb)
+        self.finished.emit(success, msg)
+
+
+class ProgressDialog(QDialog):
+    """Progress dialog for downloads."""
+    def __init__(self, parent, title="Progress"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(450, 150)
+        self.setModal(True)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        self.status_label = QLabel("Starting...")
+        self.status_label.setStyleSheet("color: #00ffcc; font-size: 13px;")
+        layout.addWidget(self.status_label)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background: #1a1a2e;
+                border: 1px solid #3a3a5e;
+                border-radius: 8px;
+                height: 24px;
+                text-align: center;
+                color: #fff;
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #00ffcc, stop:1 #00ccff);
+                border-radius: 7px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+        
+        self.detail_label = QLabel("")
+        self.detail_label.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.detail_label)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background: #0a0a1a;
+                border: 2px solid #00ffcc;
+                border-radius: 12px;
+            }
+        """)
 
 
 class ManagerWindow(QMainWindow):
@@ -69,15 +159,12 @@ class ManagerWindow(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
         
-        # Header
         header = self._create_header()
         main_layout.addWidget(header)
         
-        # Startup progress
         self.startup_frame = self._create_startup_frame()
         main_layout.addWidget(self.startup_frame)
         
-        # Main content
         splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(splitter, stretch=1)
         
@@ -89,15 +176,14 @@ class ManagerWindow(QMainWindow):
         
         splitter.setSizes([350, 750])
         
-        # Action bar
         action_bar = self._create_action_bar()
         main_layout.addWidget(action_bar)
         
-        # Status bar
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         
-        self.pending_installs = []
+        self.pending_node_installs = []
+        self.pending_model_downloads = []
         self.is_ready = False
         
         QTimer.singleShot(100, self.run_startup_checks)
@@ -167,7 +253,7 @@ class ManagerWindow(QMainWindow):
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
         
-        # Nodes
+        # Nodes section
         nodes_header = QHBoxLayout()
         nodes_label = QLabel("Custom Nodes")
         nodes_label.setObjectName("sectionLabel")
@@ -187,7 +273,7 @@ class ManagerWindow(QMainWindow):
         self.nodes_tree.setRootIsDecorated(False)
         layout.addWidget(self.nodes_tree)
         
-        # Models
+        # Models section
         models_header = QHBoxLayout()
         models_label = QLabel("Models")
         models_label.setObjectName("sectionLabel")
@@ -203,6 +289,7 @@ class ManagerWindow(QMainWindow):
         self.models_tree.setHeaderLabels(["File", "Status", ""])
         self.models_tree.setColumnWidth(0, 280)
         self.models_tree.setColumnWidth(1, 120)
+        self.models_tree.setColumnWidth(2, 90)
         self.models_tree.setRootIsDecorated(False)
         layout.addWidget(self.models_tree)
         
@@ -213,13 +300,18 @@ class ManagerWindow(QMainWindow):
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(0, 15, 0, 0)
         
-        self.install_btn = QPushButton("Install All Missing")
-        self.install_btn.setObjectName("secondaryBtn")
-        self.install_btn.clicked.connect(self.install_all_missing)
-        layout.addWidget(self.install_btn)
+        self.install_nodes_btn = QPushButton("Install Missing Nodes")
+        self.install_nodes_btn.setObjectName("secondaryBtn")
+        self.install_nodes_btn.clicked.connect(self.install_all_nodes)
+        layout.addWidget(self.install_nodes_btn)
         
-        self.update_db_btn = QPushButton("Refresh NODE_DB")
-        self.update_db_btn.setObjectName("secondaryBtn")
+        self.install_models_btn = QPushButton("Download Missing Models")
+        self.install_models_btn.setObjectName("secondaryBtn")
+        self.install_models_btn.clicked.connect(self.download_all_models)
+        layout.addWidget(self.install_models_btn)
+        
+        self.update_db_btn = QPushButton("Refresh DB")
+        self.update_db_btn.setObjectName("smallBtn")
         self.update_db_btn.clicked.connect(self.update_node_db)
         layout.addWidget(self.update_db_btn)
         
@@ -270,7 +362,6 @@ class ManagerWindow(QMainWindow):
                 border-radius: 5px;
                 height: 6px;
             }
-            
             #startupProgress::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #00ffcc, stop:1 #00ccff);
@@ -287,7 +378,6 @@ class ManagerWindow(QMainWindow):
                 padding-top: 18px;
                 background: rgba(20, 20, 40, 0.7);
             }
-            
             QGroupBox::title {
                 subcontrol-origin: margin;
                 left: 15px;
@@ -305,7 +395,6 @@ class ManagerWindow(QMainWindow):
                 border-radius: 8px;
                 font-size: 12px;
             }
-            
             QListWidget::item { padding: 12px 10px; border-radius: 6px; margin: 3px 0; }
             QListWidget::item:selected {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -316,7 +405,6 @@ class ManagerWindow(QMainWindow):
             
             QTreeWidget::item { padding: 10px 5px; border-bottom: 1px solid #1a1a2e; }
             QTreeWidget::item:selected { background: rgba(0, 255, 200, 0.2); }
-            
             QHeaderView::section {
                 background: #1a1a3e;
                 color: #00ccff;
@@ -333,7 +421,6 @@ class ManagerWindow(QMainWindow):
                 font-size: 13px;
                 font-weight: bold;
             }
-            
             #primaryBtn {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #00ffcc, stop:1 #00ccff);
@@ -355,6 +442,9 @@ class ManagerWindow(QMainWindow):
             
             #installBtn { background: #ff6b6b; color: white; padding: 5px 15px; font-size: 11px; border-radius: 5px; }
             #installBtn:hover { background: #ff8787; }
+            
+            #downloadBtn { background: #6b9fff; color: white; padding: 5px 15px; font-size: 11px; border-radius: 5px; }
+            #downloadBtn:hover { background: #87b0ff; }
             
             QStatusBar { background: #0a0a1a; color: #555; border-top: 1px solid #2a2a4e; padding: 5px; }
             
@@ -382,7 +472,7 @@ class ManagerWindow(QMainWindow):
         self.refresh_workflows()
         self.update_system_status()
         
-        msg = f"Ready! NODE_DB: {results['node_db_count']} | Workflows: {results['total_workflows']}"
+        msg = f"Ready! Nodes: {results['node_db_count']} | Models: {results['model_db_count']} | Workflows: {results['total_workflows']}"
         self.status_bar.showMessage(msg)
     
     def refresh_workflows(self):
@@ -401,10 +491,11 @@ class ManagerWindow(QMainWindow):
         self.status_bar.showMessage(f"Synced {synced}, skipped {skipped}")
     
     def update_node_db(self):
-        self.status_bar.showMessage("Refreshing NODE_DB...")
+        self.status_bar.showMessage("Refreshing databases...")
         QApplication.processEvents()
         fetch_node_db(force_refresh=True)
-        self.status_bar.showMessage(f"NODE_DB: {len(NODE_DB)} entries")
+        load_model_db()
+        self.status_bar.showMessage(f"Nodes: {len(NODE_DB)} | Models: {len(MODEL_DB)}")
         
         current = self.workflow_list.currentItem()
         if current:
@@ -419,9 +510,9 @@ class ManagerWindow(QMainWindow):
     def check_dependencies(self, filename):
         deps = check_workflow_dependencies(filename)
         
+        # Nodes
         self.nodes_tree.clear()
-        self.pending_installs = []
-        
+        self.pending_node_installs = []
         installed_count = 0
         missing_count = 0
         
@@ -445,11 +536,11 @@ class ManagerWindow(QMainWindow):
                 item.setForeground(1, QColor("#ff6b6b"))
                 missing_count += 1
                 if node["url"]:
-                    self.pending_installs.append(node["url"])
+                    self.pending_node_installs.append(node["url"])
                     btn = QPushButton("Install")
                     btn.setObjectName("installBtn")
                     btn.setFixedSize(75, 28)
-                    btn.clicked.connect(lambda c, u=node["url"]: self.install_single(u))
+                    btn.clicked.connect(lambda c, u=node["url"]: self.install_single_node(u))
                     self.nodes_tree.setItemWidget(item, 2, btn)
             
             self.nodes_tree.addTopLevelItem(item)
@@ -458,60 +549,123 @@ class ManagerWindow(QMainWindow):
         
         # Models
         self.models_tree.clear()
+        self.pending_model_downloads = []
         found = 0
         missing_m = 0
         
         for model in deps["models"]:
             item = QTreeWidgetItem()
             name = model["name"]
-            item.setText(0, name if len(name) < 40 else name[:37] + "...")
+            display_name = name if len(name) < 40 else name[:37] + "..."
+            item.setText(0, display_name)
             item.setToolTip(0, name)
+            item.setData(0, Qt.UserRole, name)
             
             if model["installed"]:
                 item.setText(1, "Found")
                 item.setForeground(1, QColor("#00ffcc"))
                 found += 1
             else:
-                item.setText(1, "Missing")
-                item.setForeground(1, QColor("#ff6b6b"))
+                if model["url"]:
+                    item.setText(1, "Available")
+                    item.setForeground(1, QColor("#6b9fff"))
+                    self.pending_model_downloads.append(name)
+                    btn = QPushButton("Download")
+                    btn.setObjectName("downloadBtn")
+                    btn.setFixedSize(75, 28)
+                    btn.clicked.connect(lambda c, m=name: self.download_single_model(m))
+                    self.models_tree.setItemWidget(item, 2, btn)
+                else:
+                    item.setText(1, "Unknown")
+                    item.setForeground(1, QColor("#ffd93d"))
                 missing_m += 1
             
             self.models_tree.addTopLevelItem(item)
         
         self.models_count.setText(f"OK: {found} / Missing: {missing_m}")
     
-    def install_single(self, url):
-        self.status_bar.showMessage(f"Installing {url.split('/')[-1]}...")
-        QApplication.processEvents()
+    def install_single_node(self, url):
+        dialog = ProgressDialog(self, "Installing Node")
+        dialog.show()
         
-        success, msg = install_node(url)
-        if success:
-            self.status_bar.showMessage(msg)
-            current = self.workflow_list.currentItem()
-            if current:
-                self.check_dependencies(current.data(Qt.UserRole))
-        else:
-            QMessageBox.warning(self, "Error", msg)
+        self.node_worker = NodeInstallWorker([url])
+        self.node_worker.progress.connect(lambda msg, c, t: self._update_progress(dialog, msg, c, t, True))
+        self.node_worker.finished.connect(lambda ok, msg: self._finish_install(dialog, ok, msg))
+        self.node_worker.start()
     
-    def install_all_missing(self):
-        if not self.pending_installs:
+    def install_all_nodes(self):
+        if not self.pending_node_installs:
             QMessageBox.information(self, "Info", "No missing nodes to install!")
             return
         
         reply = QMessageBox.question(self, "Confirm", 
-            f"Install {len(self.pending_installs)} missing node(s)?",
+            f"Install {len(self.pending_node_installs)} missing node(s)?",
             QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            for i, url in enumerate(self.pending_installs):
-                self.status_bar.showMessage(f"Installing {i+1}/{len(self.pending_installs)}...")
-                QApplication.processEvents()
-                install_node(url)
+            dialog = ProgressDialog(self, "Installing Nodes")
+            dialog.show()
             
-            QMessageBox.information(self, "Done", "Installation complete!")
+            self.node_worker = NodeInstallWorker(self.pending_node_installs)
+            self.node_worker.progress.connect(lambda msg, c, t: self._update_progress(dialog, msg, c, t, True))
+            self.node_worker.finished.connect(lambda ok, msg: self._finish_install(dialog, ok, msg))
+            self.node_worker.start()
+    
+    def download_single_model(self, model_name):
+        dialog = ProgressDialog(self, "Downloading Model")
+        dialog.status_label.setText(f"Downloading {model_name[:40]}...")
+        dialog.show()
+        
+        self.model_worker = ModelDownloadWorker(model_name)
+        self.model_worker.progress.connect(lambda n, d, t: self._update_download_progress(dialog, n, d, t))
+        self.model_worker.finished.connect(lambda ok, msg: self._finish_download(dialog, ok, msg))
+        self.model_worker.start()
+    
+    def download_all_models(self):
+        if not self.pending_model_downloads:
+            QMessageBox.information(self, "Info", "No models to download!")
+            return
+        
+        QMessageBox.information(self, "Info", 
+            f"Model downloads are large files.\nPlease download one at a time using the 'Download' buttons.")
+    
+    def _update_progress(self, dialog, message, current, total, is_count):
+        dialog.status_label.setText(message)
+        if is_count and total > 0:
+            pct = int((current / total) * 100)
+            dialog.progress_bar.setValue(pct)
+            dialog.detail_label.setText(f"{current} / {total}")
+        QApplication.processEvents()
+    
+    def _update_download_progress(self, dialog, name, downloaded, total):
+        if total > 0:
+            pct = int((downloaded / total) * 100)
+            dialog.progress_bar.setValue(pct)
+            
+            mb_down = downloaded / (1024 * 1024)
+            mb_total = total / (1024 * 1024)
+            dialog.detail_label.setText(f"{mb_down:.1f} MB / {mb_total:.1f} MB")
+        QApplication.processEvents()
+    
+    def _finish_install(self, dialog, success, message):
+        dialog.close()
+        if success:
+            self.status_bar.showMessage(message)
             current = self.workflow_list.currentItem()
             if current:
                 self.check_dependencies(current.data(Qt.UserRole))
+        else:
+            QMessageBox.warning(self, "Error", message)
+    
+    def _finish_download(self, dialog, success, message):
+        dialog.close()
+        if success:
+            self.status_bar.showMessage(message)
+            current = self.workflow_list.currentItem()
+            if current:
+                self.check_dependencies(current.data(Qt.UserRole))
+        else:
+            QMessageBox.warning(self, "Download Failed", message)
     
     def update_system_status(self):
         status = get_system_status()
@@ -523,7 +677,7 @@ class ManagerWindow(QMainWindow):
         if status["cuda_available"] and status["gpu_name"]:
             parts.append(status["gpu_name"])
         
-        parts.append(f"DB: {status['node_db_size']}")
+        parts.append(f"Nodes: {status['node_db_size']} | Models: {len(MODEL_DB)}")
         
         self.system_info.setText(" | ".join(parts))
     
