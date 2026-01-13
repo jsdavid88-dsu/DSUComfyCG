@@ -1,151 +1,155 @@
 {
     "models": {
         "Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/S2V/Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy_fp8_scaled",
+            "filename": "S2V/Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors",
             "folder": "diffusion_models",
             "size": "14.3GB",
-            "description": "Wan 2.2 Sound-to-Video 14B FP8 model"
+            "description": "Wan 2.2 Sound-to-Video 14B FP8"
         },
         "Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy_fp8_scaled",
+            "filename": "Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors",
             "folder": "diffusion_models",
             "size": "18.4GB",
-            "description": "Wan 2.2 Animate 14B FP8 model"
+            "description": "Wan 2.2 Animate 14B FP8"
         },
         "Wan2_1_mocha-14B-preview_fp8_e4m3fn_scaled_KJ.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/MoCha/Wan2_1_mocha-14B-preview_fp8_e4m3fn_scaled_KJ.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy_fp8_scaled",
+            "filename": "MoCha/Wan2_1_mocha-14B-preview_fp8_e4m3fn_scaled_KJ.safetensors",
             "folder": "diffusion_models",
             "size": "14.3GB",
-            "description": "Wan 2.1 MoCha 14B Preview FP8 model"
+            "description": "Wan 2.1 MoCha 14B Preview FP8"
         },
         "Wan2_1_VAE_bf16.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy",
+            "filename": "Wan2_1_VAE_bf16.safetensors",
             "folder": "vae",
             "size": "242MB",
             "description": "Wan 2.1 VAE BF16"
         },
         "wan_2.1_vae.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy",
+            "filename": "Wan2_1_VAE_bf16.safetensors",
             "folder": "vae",
             "size": "242MB",
             "description": "Wan 2.1 VAE (alias)"
         },
         "umt5-xxl-enc-bf16.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy",
+            "filename": "umt5-xxl-enc-bf16.safetensors",
             "folder": "clip",
             "size": "12GB",
             "description": "UMT5-XXL Encoder BF16"
         },
         "umt5_xxl_fp16.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy",
+            "filename": "umt5-xxl-enc-bf16.safetensors",
             "folder": "clip",
             "size": "12GB",
             "description": "UMT5-XXL FP16 (alias)"
         },
         "umt5-xxl-enc-fp8_e4m3fn.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/umt5-xxl-enc-fp8_e4m3fn.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy_fp8_scaled",
+            "filename": "umt5-xxl-enc-fp8_e4m3fn.safetensors",
             "folder": "clip",
             "size": "5GB",
             "description": "UMT5-XXL Encoder FP8"
         },
         "clip_vision_h.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/clip_vision_h/resolve/main/clip_vision_h.safetensors",
+            "repo_id": "Comfy-Org/clip_vision_h",
+            "filename": "clip_vision_h.safetensors",
             "folder": "clip_vision",
             "size": "2.5GB",
             "description": "CLIP Vision H"
         },
         "WanAnimate_relight_lora_fp16.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/loras/WanAnimate_relight_lora_fp16.safetensors",
+            "repo_id": "Kijai/WanVideo_comfy",
+            "filename": "loras/WanAnimate_relight_lora_fp16.safetensors",
             "folder": "loras",
             "size": "500MB",
             "description": "Wan Animate Relight LoRA"
         },
         "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors": {
-            "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+            "repo_id": "Lightricks/LTX-Video",
+            "filename": "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
             "folder": "loras",
             "size": "600MB",
             "description": "LightX2V I2V 14B LoRA"
         },
-        "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors": {
-            "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/loras/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
-            "folder": "loras",
-            "size": "600MB",
-            "description": "LightX2V T2V 14B LoRA"
-        },
         "ltx_video_v2.safetensors": {
-            "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.5.safetensors",
+            "repo_id": "Lightricks/LTX-Video",
+            "filename": "ltx-video-2b-v0.9.5.safetensors",
             "folder": "checkpoints",
             "size": "9GB",
             "description": "LTX Video v2"
         },
         "sam2.1_hiera_base_plus.safetensors": {
-            "url": "https://huggingface.co/facebook/sam2.1-hiera-base-plus/resolve/main/sam2.1_hiera_base_plus.pt",
+            "repo_id": "facebook/sam2.1-hiera-base-plus",
+            "filename": "sam2.1_hiera_base_plus.pt",
             "folder": "sam2",
             "size": "400MB",
             "description": "SAM2 Hiera Base Plus"
         },
-        "qwen_2.5_vl_7b_fp8_scaled.safetensors": {
-            "url": "https://huggingface.co/Kijai/Qwen2-VL-7B-Instruct_fp8_scaled/resolve/main/qwen2-vl-7b-instruct_fp8_scaled.safetensors",
-            "folder": "LLM",
-            "size": "8GB",
-            "description": "Qwen 2.5 VL 7B FP8"
-        },
-        "qwen_image_edit_2509_fp8_e4m3fn.safetensors": {
-            "url": "https://huggingface.co/Kijai/flux-fp8/resolve/main/qwen_image_edit_2509_fp8_e4m3fn.safetensors",
-            "folder": "LLM",
-            "size": "8GB",
-            "description": "Qwen Image Edit FP8"
-        },
         "qwen_image_vae.safetensors": {
-            "url": "https://huggingface.co/Kijai/flux-fp8/resolve/main/qwen_image_vae.safetensors",
+            "repo_id": "Kijai/QwenImage_experimental",
+            "filename": "e2e-qwenimage-vae_comfy_fp32.safetensors",
             "folder": "vae",
-            "size": "200MB",
+            "size": "508MB",
             "description": "Qwen Image VAE"
         },
-        "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors": {
-            "url": "https://huggingface.co/Kijai/flux-fp8/resolve/main/Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors",
-            "folder": "diffusion_models",
-            "size": "12GB",
-            "description": "Qwen Image Lightning 4-step"
+        "flux-vae-bf16.safetensors": {
+            "repo_id": "Kijai/flux-fp8",
+            "filename": "flux-vae-bf16.safetensors",
+            "folder": "vae",
+            "size": "168MB",
+            "description": "FLUX VAE BF16"
         },
         "MelBandRoformer_fp32.safetensors": {
-            "url": "https://huggingface.co/Kijai/MelBand-Roformer/resolve/main/MelBandRoformer_fp32.safetensors",
+            "repo_id": "Kijai/MelBand-Roformer",
+            "filename": "MelBandRoformer_fp32.safetensors",
             "folder": "audio",
             "size": "300MB",
             "description": "MelBand Roformer Audio Separator"
         },
         "wav2vec2_large_english_fp16.safetensors": {
-            "url": "https://huggingface.co/facebook/wav2vec2-large-robust/resolve/main/model.safetensors",
+            "repo_id": "facebook/wav2vec2-large-robust",
+            "filename": "model.safetensors",
             "folder": "audio",
             "size": "1.2GB",
             "description": "Wav2Vec2 Large English"
         },
         "rife47.pth": {
-            "url": "https://huggingface.co/wavespeed/misc/resolve/main/rife/rife47.pth",
+            "repo_id": "wavespeed/misc",
+            "filename": "rife/rife47.pth",
             "folder": "rife",
             "size": "21MB",
             "description": "RIFE 4.7 Frame Interpolation"
         },
         "yolox_l.torchscript.pt": {
-            "url": "https://huggingface.co/yzd-v/DWPose/resolve/main/yolox_l.torchscript.pt",
+            "repo_id": "yzd-v/DWPose",
+            "filename": "yolox_l.torchscript.pt",
             "folder": "yolo",
             "size": "200MB",
             "description": "YOLOX-L Object Detection"
         },
         "dw-ll_ucoco_384_bs5.torchscript.pt": {
-            "url": "https://huggingface.co/yzd-v/DWPose/resolve/main/dw-ll_ucoco_384_bs5.torchscript.pt",
+            "repo_id": "yzd-v/DWPose",
+            "filename": "dw-ll_ucoco_384_bs5.torchscript.pt",
             "folder": "dwpose",
             "size": "350MB",
             "description": "DW-LL UCoCo Pose Detection"
         },
         "sd_xl_base_1.0.safetensors": {
-            "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
+            "repo_id": "stabilityai/stable-diffusion-xl-base-1.0",
+            "filename": "sd_xl_base_1.0.safetensors",
             "folder": "checkpoints",
             "size": "6.94GB",
             "description": "SDXL Base 1.0"
         },
         "Wan2.2-S2V-14B-Q4_K_M.gguf": {
-            "url": "https://huggingface.co/city96/Wan2.2-S2V-14B-gguf/resolve/main/Wan2.2-S2V-14B-Q4_K_M.gguf",
+            "repo_id": "city96/Wan2.2-S2V-14B-gguf",
+            "filename": "Wan2.2-S2V-14B-Q4_K_M.gguf",
             "folder": "diffusion_models",
             "size": "8GB",
             "description": "Wan 2.2 S2V 14B GGUF Q4"

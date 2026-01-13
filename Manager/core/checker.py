@@ -185,49 +185,84 @@ def check_model_in_db(model_name):
 
 
 def download_model(model_name, progress_callback=None):
-    """Download a model from HuggingFace. Returns (success, message)."""
-    if not requests:
-        return False, "requests module not available"
+    """Download a model from HuggingFace using huggingface_hub library.
     
+    Falls back to direct URL download if huggingface_hub is not available.
+    Returns (success, message).
+    """
     # Check if in our DB
     in_db, info = check_model_in_db(model_name)
     if not in_db:
         return False, f"Model '{model_name}' not found in MODEL_DB"
     
-    url = info.get("url")
     folder_key = info.get("folder", "checkpoints")
-    
-    if not url:
-        return False, "No download URL for this model"
-    
-    # Determine target path
     folder_path = FOLDER_MAPPINGS.get(folder_key, f"ComfyUI/models/{folder_key}")
     target_dir = os.path.join(BASE_DIR, folder_path)
-    
-    # Use original filename from URL if different
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
-    # Check if file exists AND is large enough (at least 1MB for valid models)
-    MIN_FILE_SIZE = 1024 * 1024  # 1MB minimum
+    # Check if file already exists and is valid (>1MB)
+    MIN_FILE_SIZE = 1024 * 1024
     if os.path.exists(target_path):
         file_size = os.path.getsize(target_path)
         if file_size > MIN_FILE_SIZE:
-            return True, f"Model already exists: {filename} ({file_size // (1024*1024)}MB)"
+            return True, f"Already exists: {filename} ({file_size // (1024*1024)}MB)"
         else:
-            # Remove corrupt/incomplete file
             logger.warning(f"Removing incomplete file: {filename} ({file_size} bytes)")
             os.remove(target_path)
     
     # Create directory if needed
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     
+    # Try huggingface_hub first (preferred method)
+    repo_id = info.get("repo_id")
+    hf_filename = info.get("filename") or info.get("hf_filename")
+    
+    if repo_id and hf_filename:
+        try:
+            from huggingface_hub import hf_hub_download
+            logger.info(f"Downloading {filename} via huggingface_hub...")
+            logger.info(f"Repo: {repo_id}, File: {hf_filename}")
+            
+            # Download to target directory
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=hf_filename,
+                local_dir=target_dir,
+                local_dir_use_symlinks=False
+            )
+            
+            # Move to correct location if needed (hf_hub might create subdirs)
+            actual_file = os.path.join(target_dir, filename)
+            if local_path != actual_file and os.path.exists(local_path):
+                import shutil
+                shutil.move(local_path, actual_file)
+            
+            if os.path.exists(target_path):
+                actual_size = os.path.getsize(target_path)
+                logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB)")
+                return True, f"Downloaded {filename}"
+            else:
+                return False, "Download completed but file not found"
+                
+        except ImportError:
+            logger.warning("huggingface_hub not installed, trying direct URL...")
+        except Exception as e:
+            logger.warning(f"huggingface_hub failed: {e}, trying direct URL...")
+    
+    # Fallback to direct URL download
+    url = info.get("url")
+    if not url:
+        return False, "No download URL available"
+    
+    if not requests:
+        return False, "requests module not available"
+    
     try:
         logger.info(f"Downloading {filename}...")
         logger.info(f"URL: {url}")
         logger.info(f"Target: {target_path}")
         
-        # Use session for better redirect handling
         session = requests.Session()
         response = session.get(url, stream=True, timeout=60, allow_redirects=True)
         response.raise_for_status()
@@ -242,30 +277,26 @@ def download_model(model_name, progress_callback=None):
         last_reported = 0
         
         with open(target_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
                     
-                    # Report progress
-                    if progress_callback:
-                        if total_size > 0:
-                            display_downloaded = min(downloaded, total_size)
-                            if downloaded - last_reported >= 1024 * 1024:
-                                progress_callback(display_downloaded, total_size)
-                                last_reported = downloaded
+                    if progress_callback and total_size > 0:
+                        display_downloaded = min(downloaded, total_size)
+                        if downloaded - last_reported >= 1024 * 1024:
+                            progress_callback(display_downloaded, total_size)
+                            last_reported = downloaded
         
-        # Verify downloaded file size
         actual_size = os.path.getsize(target_path)
         if actual_size < MIN_FILE_SIZE:
             os.remove(target_path)
-            return False, f"Downloaded file too small ({actual_size} bytes) - likely error page"
+            return False, f"Downloaded file too small ({actual_size} bytes)"
         
-        logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB) to {folder_key}/")
+        logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB)")
         return True, f"Downloaded {filename}"
     
     except requests.exceptions.RequestException as e:
-        # Clean up partial download
         if os.path.exists(target_path):
             os.remove(target_path)
         return False, f"Network error: {str(e)}"
