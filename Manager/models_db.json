@@ -156,16 +156,16 @@
         },
         "qwen_2.5_vl_7b_fp8_scaled.safetensors": {
             "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
-            "filename": "split_files/text_encoders/qwen_2.5_vl_7b.safetensors",
-            "folder": "LLM",
-            "size": "8GB",
-            "description": "Qwen 2.5 VL 7B FP8 Text Encoder"
+            "filename": "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+            "folder": "text_encoders",
+            "size": "9.38GB",
+            "description": "Qwen 2.5 VL 7B FP8 Scaled Text Encoder"
         },
         "qwen_image_edit_2509_fp8_e4m3fn.safetensors": {
-            "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
-            "filename": "split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors",
+            "repo_id": "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+            "filename": "split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors",
             "folder": "diffusion_models",
-            "size": "12GB",
+            "size": "20.4GB",
             "description": "Qwen Image Edit 2509 FP8"
         },
         "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors": {
@@ -192,6 +192,7 @@
         "loras": "ComfyUI/models/loras",
         "sam2": "ComfyUI/models/sam2",
         "LLM": "ComfyUI/models/LLM",
+        "text_encoders": "ComfyUI/models/text_encoders",
         "audio": "ComfyUI/models/audio",
         "rife": "ComfyUI/models/rife",
         "yolo": "ComfyUI/models/yolo",
