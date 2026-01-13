@@ -38,6 +38,11 @@ Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
 NODE_DB = {}
 NODE_DB_CACHE_FILE = os.path.join(CACHE_DIR, "node_db_cache.json")
 
+# Model DB (from models_db.json)
+MODEL_DB = {}
+MODEL_DB_FILE = os.path.join(MANAGER_DIR, "models_db.json")
+FOLDER_MAPPINGS = {}
+
 # Built-in nodes
 BUILTIN_NODES = {
     "CheckpointLoaderSimple", "KSampler", "KSamplerAdvanced", "EmptyLatentImage",
@@ -132,6 +137,103 @@ def fetch_node_db(force_refresh=False):
             except:
                 pass
         return False
+
+
+def load_model_db():
+    """Load MODEL_DB from models_db.json"""
+    global MODEL_DB, FOLDER_MAPPINGS
+    
+    if not os.path.exists(MODEL_DB_FILE):
+        logger.warning("models_db.json not found")
+        return False
+    
+    try:
+        with open(MODEL_DB_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        MODEL_DB = data.get("models", {})
+        FOLDER_MAPPINGS = data.get("folder_mappings", {})
+        logger.info(f"Loaded MODEL_DB with {len(MODEL_DB)} entries")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to load MODEL_DB: {e}")
+        return False
+
+
+def check_model_in_db(model_name):
+    """Check if a model is in our MODEL_DB. Returns (in_db, info_dict)."""
+    # Direct match
+    if model_name in MODEL_DB:
+        return True, MODEL_DB[model_name]
+    
+    # Try without path prefix (e.g., "Kijai_WAN/file.safetensors" -> "file.safetensors")
+    basename = os.path.basename(model_name.replace("\\", "/"))
+    if basename in MODEL_DB:
+        return True, MODEL_DB[basename]
+    
+    # Try with path variations
+    for key, info in MODEL_DB.items():
+        if basename == os.path.basename(key):
+            return True, info
+    
+    return False, None
+
+
+def download_model(model_name, progress_callback=None):
+    """Download a model from HuggingFace. Returns (success, message)."""
+    if not requests:
+        return False, "requests module not available"
+    
+    # Check if in our DB
+    in_db, info = check_model_in_db(model_name)
+    if not in_db:
+        return False, f"Model '{model_name}' not found in MODEL_DB"
+    
+    url = info.get("url")
+    folder_key = info.get("folder", "checkpoints")
+    
+    if not url:
+        return False, "No download URL for this model"
+    
+    # Determine target path
+    folder_path = FOLDER_MAPPINGS.get(folder_key, f"ComfyUI/models/{folder_key}")
+    target_dir = os.path.join(BASE_DIR, folder_path)
+    
+    # Use original filename from URL if different
+    filename = os.path.basename(model_name.replace("\\", "/"))
+    target_path = os.path.join(target_dir, filename)
+    
+    if os.path.exists(target_path):
+        return True, f"Model already exists: {filename}"
+    
+    # Create directory if needed
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+    
+    try:
+        logger.info(f"Downloading {filename} from {url[:50]}...")
+        
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+        
+        with open(target_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_callback and total_size:
+                        progress_callback(downloaded, total_size)
+        
+        logger.info(f"Downloaded {filename} to {folder_key}/")
+        return True, f"Downloaded {filename}"
+    
+    except Exception as e:
+        # Clean up partial download
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        return False, str(e)
 
 
 def scan_workflows():
@@ -239,11 +341,20 @@ def check_node_installed(node_type):
 
 
 def check_model_installed(model_name):
-    """Check if a model is installed."""
+    """Check if a model is installed. Returns (installed, folder/status, download_url)."""
+    # Check if file exists in models folder
+    basename = os.path.basename(model_name.replace("\\", "/"))
+    
     if os.path.exists(MODELS_PATH):
         for root, dirs, files in os.walk(MODELS_PATH):
-            if model_name in files:
+            if basename in files or model_name in files:
                 return True, "found", None
+    
+    # Check if we have download URL in MODEL_DB
+    in_db, info = check_model_in_db(model_name)
+    if in_db:
+        return False, info.get("folder", "unknown"), info.get("url")
+    
     return False, "unknown", None
 
 
@@ -417,5 +528,6 @@ def run_comfyui():
         return False
 
 
-# Initialize NODE_DB on module load
+# Initialize NODE_DB and MODEL_DB on module load
 fetch_node_db()
+load_model_db()
