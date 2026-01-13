@@ -153,6 +153,34 @@
             "folder": "diffusion_models",
             "size": "8GB",
             "description": "Wan 2.2 S2V 14B GGUF Q4"
+        },
+        "qwen_2.5_vl_7b_fp8_scaled.safetensors": {
+            "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+            "filename": "split_files/text_encoders/qwen_2.5_vl_7b.safetensors",
+            "folder": "LLM",
+            "size": "8GB",
+            "description": "Qwen 2.5 VL 7B FP8 Text Encoder"
+        },
+        "qwen_image_edit_2509_fp8_e4m3fn.safetensors": {
+            "repo_id": "Comfy-Org/Qwen-Image_ComfyUI",
+            "filename": "split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors",
+            "folder": "diffusion_models",
+            "size": "12GB",
+            "description": "Qwen Image Edit 2509 FP8"
+        },
+        "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors": {
+            "repo_id": "lightx2v/Qwen-Image-Lightning",
+            "filename": "Qwen-Image-Lightning-4steps-V2.0-bf16.safetensors",
+            "folder": "diffusion_models",
+            "size": "12GB",
+            "description": "Qwen Image Lightning 4-step"
+        },
+        "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors": {
+            "repo_id": "Cyph3r/lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16",
+            "filename": "lightx2v_T2V_14B_cfg_step_distill_v2_lora_rank64_bf16.safetensors",
+            "folder": "loras",
+            "size": "600MB",
+            "description": "LightX2V T2V 14B LoRA"
         }
     },
     "folder_mappings": {
