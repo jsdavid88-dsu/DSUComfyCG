@@ -81,7 +81,7 @@ class StartupWorker(QThread):
 class DownloadQueueWorker(QThread):
     """Background worker for downloading queue items."""
     item_started = Signal(str, int, int)  # name, index, total
-    item_progress = Signal(str, int, int)  # name, downloaded, total_bytes
+    item_progress = Signal(str, object, object)  # name, downloaded, total_bytes (use object for large values)
     item_finished = Signal(str, bool, str)  # name, success, message
     all_finished = Signal()
     
