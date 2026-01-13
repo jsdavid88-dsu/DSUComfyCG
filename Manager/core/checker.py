@@ -163,10 +163,61 @@ def load_model_db():
     except Exception as e:
         logger.error(f"Failed to load MODEL_DB: {e}")
         return False
+def search_huggingface(model_name):
+    """Search HuggingFace for a model by name. Returns (repo_id, filename) or (None, None)."""
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi()
+        
+        # Extract search terms from model name
+        basename = os.path.basename(model_name.replace("\\", "/"))
+        search_term = basename.replace(".safetensors", "").replace(".ckpt", "").replace(".pth", "")
+        search_term = search_term.replace("_", " ").replace("-", " ")[:50]
+        
+        logger.info(f"Searching HuggingFace for: {search_term}")
+        
+        # Search for models
+        results = list(api.list_models(search=search_term, limit=10))
+        
+        if not results:
+            # Try shorter search
+            short_term = search_term.split()[0] if " " in search_term else search_term[:20]
+            results = list(api.list_models(search=short_term, limit=10))
+        
+        for model in results:
+            try:
+                # List files in the repo
+                files = api.list_repo_files(model.id)
+                
+                # Look for our file
+                for f in files:
+                    if f.endswith(('.safetensors', '.ckpt', '.pth', '.pt', '.gguf', '.bin')):
+                        file_basename = os.path.basename(f)
+                        if file_basename.lower() == basename.lower():
+                            logger.info(f"Found: {model.id}/{f}")
+                            return model.id, f
+                        # Partial match
+                        if basename.lower().replace("_", "").replace("-", "") in file_basename.lower().replace("_", "").replace("-", ""):
+                            logger.info(f"Partial match: {model.id}/{f}")
+                            return model.id, f
+            except:
+                continue
+        
+        return None, None
+        
+    except ImportError:
+        logger.debug("huggingface_hub not installed, cannot search")
+        return None, None
+    except Exception as e:
+        logger.debug(f"HuggingFace search failed: {e}")
+        return None, None
 
 
 def check_model_in_db(model_name):
-    """Check if a model is in our MODEL_DB. Returns (in_db, info_dict)."""
+    """Check if a model is in our MODEL_DB. Returns (in_db, info_dict).
+    
+    Falls back to HuggingFace search if not found in local DB.
+    """
     # Direct match
     if model_name in MODEL_DB:
         return True, MODEL_DB[model_name]
@@ -181,7 +232,40 @@ def check_model_in_db(model_name):
         if basename == os.path.basename(key):
             return True, info
     
+    # Fallback: Search HuggingFace
+    repo_id, filename = search_huggingface(model_name)
+    if repo_id and filename:
+        # Create a dynamic entry
+        return True, {
+            "repo_id": repo_id,
+            "filename": filename,
+            "folder": guess_model_folder(basename),
+            "description": f"Auto-found on HuggingFace"
+        }
+    
     return False, None
+
+
+def guess_model_folder(filename):
+    """Guess the appropriate folder for a model based on its name."""
+    lower = filename.lower()
+    if "vae" in lower:
+        return "vae"
+    elif "clip" in lower:
+        return "clip"
+    elif "lora" in lower:
+        return "loras"
+    elif "controlnet" in lower:
+        return "controlnet"
+    elif "unet" in lower or "diffusion" in lower:
+        return "diffusion_models"
+    elif "llm" in lower or "qwen" in lower or "t5" in lower:
+        return "LLM"
+    elif ".gguf" in lower:
+        return "diffusion_models"
+    else:
+        return "checkpoints"
+
 
 
 def download_model(model_name, progress_callback=None):
