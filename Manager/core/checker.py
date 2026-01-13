@@ -212,19 +212,34 @@ def download_model(model_name, progress_callback=None):
     try:
         logger.info(f"Downloading {filename} from {url[:50]}...")
         
-        response = requests.get(url, stream=True, timeout=30)
+        # Use session for better redirect handling
+        session = requests.Session()
+        response = session.get(url, stream=True, timeout=60, allow_redirects=True)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
         downloaded = 0
+        last_reported = 0
         
         with open(target_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
+            for chunk in response.iter_content(chunk_size=1024 * 1024):  # 1MB chunks
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
-                    if progress_callback and total_size:
-                        progress_callback(downloaded, total_size)
+                    
+                    # Report progress (cap downloaded at total_size for display)
+                    if progress_callback:
+                        if total_size > 0:
+                            display_downloaded = min(downloaded, total_size)
+                            # Only update every 1MB to reduce UI overhead
+                            if downloaded - last_reported >= 1024 * 1024:
+                                progress_callback(display_downloaded, total_size)
+                                last_reported = downloaded
+                        else:
+                            # Unknown size - just show downloaded
+                            if downloaded - last_reported >= 1024 * 1024:
+                                progress_callback(downloaded, 0)
+                                last_reported = downloaded
         
         logger.info(f"Downloaded {filename} to {folder_key}/")
         return True, f"Downloaded {filename}"
