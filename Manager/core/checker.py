@@ -164,45 +164,79 @@ def load_model_db():
         logger.error(f"Failed to load MODEL_DB: {e}")
         return False
 def search_huggingface(model_name):
-    """Search HuggingFace for a model by name. Returns (repo_id, filename) or (None, None)."""
+    """Search HuggingFace for a model by name. Returns (repo_id, filename) or (None, None).
+    
+    Strategy:
+    1. Search priority repos (Comfy-Org, Kijai) for EXACT filename match
+    2. Search by general model name
+    3. Use EXACT match first, then partial match as last resort
+    """
     try:
         from huggingface_hub import HfApi
         api = HfApi()
         
-        # Extract search terms from model name
         basename = os.path.basename(model_name.replace("\\", "/"))
-        search_term = basename.replace(".safetensors", "").replace(".ckpt", "").replace(".pth", "")
-        search_term = search_term.replace("_", " ").replace("-", " ")[:50]
         
-        logger.info(f"Searching HuggingFace for: {search_term}")
+        # Priority repos to search first (common ComfyUI model sources)
+        PRIORITY_REPOS = [
+            "Comfy-Org/Qwen-Image_ComfyUI",
+            "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+            "Comfy-Org/Wan_2.1_ComfyUI",
+            "Kijai/WanVideo_comfy",
+            "Kijai/WanVideo_comfy_fp8_scaled",
+            "Kijai/flux-fp8",
+            "Kijai/QwenImage_experimental",
+            "Lightricks/LTX-Video",
+            "wavespeed/misc",
+            "facebook/sam2.1-hiera-base-plus",
+            "stabilityai/stable-diffusion-xl-base-1.0",
+        ]
         
-        # Search for models
-        results = list(api.list_models(search=search_term, limit=10))
+        logger.info(f"Searching HuggingFace for: {basename}")
         
-        if not results:
-            # Try shorter search
-            short_term = search_term.split()[0] if " " in search_term else search_term[:20]
-            results = list(api.list_models(search=short_term, limit=10))
-        
-        for model in results:
+        # Step 1: Search priority repos for EXACT filename match
+        for repo_id in PRIORITY_REPOS:
             try:
-                # List files in the repo
-                files = api.list_repo_files(model.id)
-                
-                # Look for our file
+                files = api.list_repo_files(repo_id)
                 for f in files:
-                    if f.endswith(('.safetensors', '.ckpt', '.pth', '.pt', '.gguf', '.bin')):
-                        file_basename = os.path.basename(f)
-                        if file_basename.lower() == basename.lower():
-                            logger.info(f"Found: {model.id}/{f}")
-                            return model.id, f
-                        # Partial match
-                        if basename.lower().replace("_", "").replace("-", "") in file_basename.lower().replace("_", "").replace("-", ""):
-                            logger.info(f"Partial match: {model.id}/{f}")
-                            return model.id, f
+                    file_basename = os.path.basename(f)
+                    # EXACT match only
+                    if file_basename.lower() == basename.lower():
+                        logger.info(f"Found EXACT match in priority repo: {repo_id}/{f}")
+                        return repo_id, f
             except:
                 continue
         
+        # Step 2: General search by model name
+        search_term = basename.replace(".safetensors", "").replace(".ckpt", "").replace(".pth", "")
+        search_term = search_term.replace("_", " ").replace("-", " ")[:40]
+        
+        logger.info(f"Priority repos: no exact match. Searching models: {search_term}")
+        
+        results = list(api.list_models(search=search_term, limit=15))
+        
+        if not results:
+            short_term = search_term.split()[0] if " " in search_term else search_term[:15]
+            results = list(api.list_models(search=short_term, limit=15))
+        
+        # Step 2a: EXACT filename match in search results
+        for model in results:
+            try:
+                files = api.list_repo_files(model.id)
+                for f in files:
+                    file_basename = os.path.basename(f)
+                    if file_basename.lower() == basename.lower():
+                        logger.info(f"Found EXACT match: {model.id}/{f}")
+                        return model.id, f
+            except:
+                continue
+        
+        # Step 2b: Partial match (only if no exact match found)
+        # Disabled - partial matching causes wrong file downloads
+        # for model in results:
+        #     ...
+        
+        logger.info(f"No match found for: {basename}")
         return None, None
         
     except ImportError:
