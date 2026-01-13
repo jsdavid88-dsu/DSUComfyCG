@@ -832,7 +832,7 @@ class ManagerWindow(QMainWindow):
         if status["python_version"]:
             parts.append(f"Py {status['python_version']}")
         if status["cuda_available"] and status["gpu_name"]:
-            parts.append(status["gpu_name"][:20])
+            parts.append(status["gpu_name"][:30])
         parts.append(f"DB: {status['node_db_size']}")
         self.system_info.setText(" | ".join(parts))
     
