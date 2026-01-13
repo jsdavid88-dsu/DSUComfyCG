@@ -218,23 +218,31 @@ def check_model_in_db(model_name):
     
     Falls back to HuggingFace search if not found in local DB.
     """
+    logger.info(f"[Model Check] Looking for: {model_name}")
+    
     # Direct match
     if model_name in MODEL_DB:
+        logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
         return True, MODEL_DB[model_name]
     
     # Try without path prefix (e.g., "Kijai_WAN/file.safetensors" -> "file.safetensors")
     basename = os.path.basename(model_name.replace("\\", "/"))
     if basename in MODEL_DB:
+        logger.info(f"[Model Check] ✓ Basename match: {basename}")
         return True, MODEL_DB[basename]
     
     # Try with path variations
     for key, info in MODEL_DB.items():
         if basename == os.path.basename(key):
+            logger.info(f"[Model Check] ✓ Key basename match: {key}")
             return True, info
+    
+    logger.info(f"[Model Check] Not in MODEL_DB, searching HuggingFace...")
     
     # Fallback: Search HuggingFace
     repo_id, filename = search_huggingface(model_name)
     if repo_id and filename:
+        logger.info(f"[Model Check] ✓ Found on HuggingFace: {repo_id}/{filename}")
         # Create a dynamic entry
         return True, {
             "repo_id": repo_id,
@@ -243,6 +251,7 @@ def check_model_in_db(model_name):
             "description": f"Auto-found on HuggingFace"
         }
     
+    logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
     return False, None
 
 
