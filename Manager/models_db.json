@@ -1,15 +1,15 @@
 {
     "models": {
         "Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/wan2_2/Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors",
+            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/S2V/Wan2_2-S2V-14B_fp8_e4m3fn_scaled_KJ.safetensors",
             "folder": "diffusion_models",
             "size": "14.3GB",
             "description": "Wan 2.2 Sound-to-Video 14B FP8 model"
         },
         "Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors": {
-            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors",
+            "url": "https://huggingface.co/Kijai/WanVideo_comfy_fp8_scaled/resolve/main/Wan22Animate/Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors",
             "folder": "diffusion_models",
-            "size": "14.3GB",
+            "size": "18.4GB",
             "description": "Wan 2.2 Animate 14B FP8 model"
         },
         "Wan2_1_mocha-14B-preview_fp8_e4m3fn_scaled_KJ.safetensors": {
@@ -21,13 +21,13 @@
         "Wan2_1_VAE_bf16.safetensors": {
             "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
             "folder": "vae",
-            "size": "800MB",
+            "size": "242MB",
             "description": "Wan 2.1 VAE BF16"
         },
         "wan_2.1_vae.safetensors": {
             "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/Wan2_1_VAE_bf16.safetensors",
             "folder": "vae",
-            "size": "800MB",
+            "size": "242MB",
             "description": "Wan 2.1 VAE (alias)"
         },
         "umt5-xxl-enc-bf16.safetensors": {
@@ -73,13 +73,13 @@
             "description": "LightX2V T2V 14B LoRA"
         },
         "ltx_video_v2.safetensors": {
-            "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b.safetensors",
+            "url": "https://huggingface.co/Lightricks/LTX-Video/resolve/main/ltx-video-2b-v0.9.5.safetensors",
             "folder": "checkpoints",
             "size": "9GB",
             "description": "LTX Video v2"
         },
         "sam2.1_hiera_base_plus.safetensors": {
-            "url": "https://huggingface.co/facebook/sam2-hiera-base-plus/resolve/main/sam2.1_hiera_base_plus.safetensors",
+            "url": "https://huggingface.co/facebook/sam2.1-hiera-base-plus/resolve/main/sam2.1_hiera_base_plus.pt",
             "folder": "sam2",
             "size": "400MB",
             "description": "SAM2 Hiera Base Plus"
@@ -121,9 +121,9 @@
             "description": "Wav2Vec2 Large English"
         },
         "rife47.pth": {
-            "url": "https://huggingface.co/Kijai/RIFE_fp16/resolve/main/rife47.pth",
+            "url": "https://huggingface.co/wavespeed/misc/resolve/main/rife/rife47.pth",
             "folder": "rife",
-            "size": "25MB",
+            "size": "21MB",
             "description": "RIFE 4.7 Frame Interpolation"
         },
         "yolox_l.torchscript.pt": {
