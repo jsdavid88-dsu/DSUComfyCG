@@ -29,6 +29,7 @@ CACHE_DIR = os.path.join(MANAGER_DIR, "cache")
 
 # URLs
 NODE_DB_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
+MODEL_LIST_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/model-list.json"
 WORKFLOWS_REPO_URL = "https://api.github.com/repos/jsdavid88-dsu/DSUComfyCG/contents/workflows"
 
 # Ensure cache dir exists
@@ -41,7 +42,118 @@ NODE_DB_CACHE_FILE = os.path.join(CACHE_DIR, "node_db_cache.json")
 # Model DB (from models_db.json)
 MODEL_DB = {}
 MODEL_DB_FILE = os.path.join(MANAGER_DIR, "models_db.json")
+
+# External Model DB (from ComfyUI-Manager)
+EXT_MODEL_DB = {}
+EXT_MODEL_DB_CACHE_FILE = os.path.join(CACHE_DIR, "model_list_cache.json")
+
 FOLDER_MAPPINGS = {}
+
+# ... (Built-in nodes skipped for brevity) ...
+
+def fetch_ext_model_db():
+    """Fetch external model DB from ComfyUI-Manager."""
+    global EXT_MODEL_DB
+    
+    # Try loading from cache first
+    if os.path.exists(EXT_MODEL_DB_CACHE_FILE):
+        try:
+            with open(EXT_MODEL_DB_CACHE_FILE, 'r', encoding='utf-8') as f:
+                EXT_MODEL_DB = json.load(f).get("models", [])
+                logger.info(f"Loaded EXT_MODEL_DB from cache ({len(EXT_MODEL_DB)} entries)")
+        except Exception as e:
+            logger.warning(f"Failed to load EXT_MODEL_DB cache: {e}")
+    
+    # Fetch from GitHub if not cached or old (simple check: always try fetch in background if needed)
+    if not requests:
+        return
+
+    try:
+        logger.info("Fetching external model list from ComfyUI-Manager...")
+        response = requests.get(MODEL_LIST_URL, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            EXT_MODEL_DB = data.get("models", [])
+            # Save to cache
+            with open(EXT_MODEL_DB_CACHE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=4)
+            logger.info(f"Updated EXT_MODEL_DB ({len(EXT_MODEL_DB)} entries)")
+    except Exception as e:
+        logger.warning(f"Failed to fetch external model list: {e}")
+
+
+def check_model_in_db(model_name):
+    """Check if a model is in our MODEL_DB or External DB. Returns (in_db, info_dict).
+    
+    Priority:
+    1. Local MODEL_DB (models_db.json) - Highest priority (we control this)
+    2. External MODEL_DB (model-list.json) - Secondary (thousands of models)
+    3. HuggingFace Search - Last resort
+    """
+    logger.info(f"[Model Check] Looking for: {model_name}")
+    
+    # 1. Local MODEL_DB Check
+    if model_name in MODEL_DB:
+        logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
+        return True, MODEL_DB[model_name]
+    
+    basename = os.path.basename(model_name.replace("\\", "/"))
+    if basename in MODEL_DB:
+        logger.info(f"[Model Check] ✓ Basename match in MODEL_DB: {basename}")
+        return True, MODEL_DB[basename]
+    
+    for key, info in MODEL_DB.items():
+        if basename == os.path.basename(key):
+            logger.info(f"[Model Check] ✓ Key basename match in MODEL_DB: {key}")
+            return True, info
+            
+    # 2. External MODEL_DB Check (ComfyUI-Manager list)
+    # The external list is a list of dicts, not a dict of keys. We need to search it.
+    # Structure: {"name": "foo.ckpt", "url": "...", "filename": "..."}
+    if EXT_MODEL_DB:
+        for model in EXT_MODEL_DB:
+            # Check filename match
+            if model.get("filename") == basename:
+                logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB: {model['name']}")
+                return True, {
+                    "url": model.get("url"),
+                    "filename": model.get("filename"),
+                    "folder": model.get("type", "checkpoints"), # Map types if needed
+                    "description": f"{model.get('name')} (External)"
+                }
+            # Check name match
+            if model.get("name") == basename:
+                logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB (by name): {model['name']}")
+                return True, {
+                    "url": model.get("url"),
+                    "filename": model.get("filename"),
+                    "folder": model.get("type", "checkpoints"),
+                    "description": f"{model.get('name')} (External)"
+                }
+
+    logger.info(f"[Model Check] Not in DBs, searching HuggingFace...")
+    
+    # 3. Fallback: Search HuggingFace
+    repo_id, filename = search_huggingface(model_name)
+    if repo_id and filename:
+        logger.info(f"[Model Check] ✓ Found on HuggingFace: {repo_id}/{filename}")
+        return True, {
+            "repo_id": repo_id,
+            "filename": filename,
+            "folder": guess_model_folder(basename),
+            "description": f"Auto-found on HuggingFace"
+        }
+    
+    logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
+    return False, None
+
+# ... (rest of file) ...
+
+# Initialize at the end
+fetch_node_db()
+load_model_db()
+fetch_ext_model_db()  # Add this call
+
 
 # Built-in nodes
 BUILTIN_NODES = {
