@@ -57,10 +57,10 @@
             "description": "UMT5-XXL Encoder FP8"
         },
         "clip_vision_h.safetensors": {
-            "repo_id": "Comfy-Org/clip_vision_h",
-            "filename": "clip_vision_h.safetensors",
+            "repo_id": "Comfy-Org/Wan_2.1_ComfyUI_repackaged",
+            "filename": "split_files/clip_vision/clip_vision_h.safetensors",
             "folder": "clip_vision",
-            "size": "2.5GB",
+            "size": "1.26GB",
             "description": "CLIP Vision H"
         },
         "WanAnimate_relight_lora_fp16.safetensors": {
@@ -106,7 +106,7 @@
             "description": "FLUX VAE BF16"
         },
         "MelBandRoformer_fp32.safetensors": {
-            "repo_id": "Kijai/MelBand-Roformer",
+            "repo_id": "Kijai/MelBandRoFormer_comfy",
             "filename": "MelBandRoformer_fp32.safetensors",
             "folder": "audio",
             "size": "300MB",
@@ -127,14 +127,14 @@
             "description": "RIFE 4.7 Frame Interpolation"
         },
         "yolox_l.torchscript.pt": {
-            "repo_id": "yzd-v/DWPose",
+            "repo_id": "hr16/yolox-onnx",
             "filename": "yolox_l.torchscript.pt",
             "folder": "yolo",
             "size": "200MB",
             "description": "YOLOX-L Object Detection"
         },
         "dw-ll_ucoco_384_bs5.torchscript.pt": {
-            "repo_id": "yzd-v/DWPose",
+            "repo_id": "hr16/DWPose-TorchScript-BatchSize5",
             "filename": "dw-ll_ucoco_384_bs5.torchscript.pt",
             "folder": "dwpose",
             "size": "350MB",
