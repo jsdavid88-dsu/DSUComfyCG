@@ -27,7 +27,12 @@ MODELS_PATH = os.path.join(COMFY_PATH, "models")
 PYTHON_PATH = os.path.join(BASE_DIR, "python_embeded", "python.exe")
 CACHE_DIR = os.path.join(MANAGER_DIR, "cache")
 
-# URLs
+# Local Data Files (Version Controlled)
+DATA_DIR = os.path.join(MANAGER_DIR, "data")
+NODE_DB_FILE = os.path.join(DATA_DIR, "extension-node-map.json")
+MODEL_LIST_FILE = os.path.join(DATA_DIR, "model-list.json")
+
+# Fallback URLs (in case local files missing)
 NODE_DB_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/extension-node-map.json"
 MODEL_LIST_URL = "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/model-list.json"
 WORKFLOWS_REPO_URL = "https://api.github.com/repos/jsdavid88-dsu/DSUComfyCG/contents/workflows"
@@ -52,10 +57,21 @@ FOLDER_MAPPINGS = {}
 # ... (Built-in nodes skipped for brevity) ...
 
 def fetch_ext_model_db():
-    """Fetch external model DB from ComfyUI-Manager."""
+    """Load external model DB (Version Controlled)."""
     global EXT_MODEL_DB
     
-    # Try loading from cache first
+    # 1. Try loading from local repo file (Highest priority for version control)
+    if os.path.exists(MODEL_LIST_FILE):
+        try:
+            with open(MODEL_LIST_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                EXT_MODEL_DB = data.get("models", [])
+                logger.info(f"Loaded EXT_MODEL_DB from local repo ({len(EXT_MODEL_DB)} entries)")
+                return  # Success, use local file
+        except Exception as e:
+            logger.warning(f"Failed to load local EXT_MODEL_DB: {e}")
+
+    # 2. Try loading from cache
     if os.path.exists(EXT_MODEL_DB_CACHE_FILE):
         try:
             with open(EXT_MODEL_DB_CACHE_FILE, 'r', encoding='utf-8') as f:
@@ -64,12 +80,12 @@ def fetch_ext_model_db():
         except Exception as e:
             logger.warning(f"Failed to load EXT_MODEL_DB cache: {e}")
     
-    # Fetch from GitHub if not cached or old (simple check: always try fetch in background if needed)
+    # 3. Fetch from GitHub (Fallback)
     if not requests:
         return
 
     try:
-        logger.info("Fetching external model list from ComfyUI-Manager...")
+        logger.info("Fetching external model list from URL...")
         response = requests.get(MODEL_LIST_URL, timeout=10)
         if response.status_code == 200:
             data = response.json()
@@ -77,7 +93,7 @@ def fetch_ext_model_db():
             # Save to cache
             with open(EXT_MODEL_DB_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
-            logger.info(f"Updated EXT_MODEL_DB ({len(EXT_MODEL_DB)} entries)")
+            logger.info(f"Updated EXT_MODEL_DB from URL ({len(EXT_MODEL_DB)} entries)")
     except Exception as e:
         logger.warning(f"Failed to fetch external model list: {e}")
 
@@ -147,12 +163,6 @@ def check_model_in_db(model_name):
     logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
     return False, None
 
-# ... (rest of file) ...
-
-# Initialize at the end
-fetch_node_db()
-load_model_db()
-fetch_ext_model_db()  # Add this call
 
 
 # Built-in nodes
@@ -954,4 +964,5 @@ def perform_update():
 # Initialize NODE_DB and MODEL_DB on module load
 fetch_node_db()
 load_model_db()
+fetch_ext_model_db()
 
