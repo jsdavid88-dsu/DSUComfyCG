@@ -961,6 +961,251 @@ def perform_update():
         return False, f"Update failed: {str(e)}"
 
 
+# =============================================================================
+# System Status Report Functions
+# =============================================================================
+
+def check_comfyui_version():
+    """Check ComfyUI current vs latest version.
+    
+    Returns dict: {
+        "installed": bool,
+        "current_commit": str,
+        "latest_commit": str,
+        "update_available": bool,
+        "commits_behind": int,
+        "error": str or None
+    }
+    """
+    result = {
+        "installed": os.path.exists(COMFY_PATH),
+        "current_commit": None,
+        "latest_commit": None,
+        "update_available": False,
+        "commits_behind": 0,
+        "error": None
+    }
+    
+    if not result["installed"]:
+        result["error"] = "ComfyUI not installed"
+        return result
+    
+    git_dir = os.path.join(COMFY_PATH, ".git")
+    if not os.path.exists(git_dir):
+        result["error"] = "Not a git repository"
+        return result
+    
+    try:
+        # Fetch latest (don't pull, just fetch)
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            capture_output=True, cwd=COMFY_PATH, timeout=30
+        )
+        
+        # Get current commit
+        current = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, cwd=COMFY_PATH
+        )
+        result["current_commit"] = current.stdout.strip()
+        
+        # Get remote latest commit
+        remote = subprocess.run(
+            ["git", "rev-parse", "--short", "origin/master"],
+            capture_output=True, text=True, cwd=COMFY_PATH
+        )
+        if remote.returncode != 0:
+            # Try origin/main instead
+            remote = subprocess.run(
+                ["git", "rev-parse", "--short", "origin/main"],
+                capture_output=True, text=True, cwd=COMFY_PATH
+            )
+        result["latest_commit"] = remote.stdout.strip()
+        
+        # Count commits behind
+        behind = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..origin/master"],
+            capture_output=True, text=True, cwd=COMFY_PATH
+        )
+        if behind.returncode != 0:
+            behind = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD..origin/main"],
+                capture_output=True, text=True, cwd=COMFY_PATH
+            )
+        
+        try:
+            result["commits_behind"] = int(behind.stdout.strip())
+        except:
+            result["commits_behind"] = 0
+        
+        result["update_available"] = result["commits_behind"] > 0
+        
+    except Exception as e:
+        result["error"] = str(e)
+    
+    return result
+
+
+def check_custom_nodes_updates():
+    """Check all custom nodes for available updates.
+    
+    Returns list of dicts: [{
+        "name": str,
+        "path": str,
+        "has_git": bool,
+        "update_available": bool,
+        "commits_behind": int,
+        "error": str or None
+    }]
+    """
+    results = []
+    
+    if not os.path.exists(CUSTOM_NODES_PATH):
+        return results
+    
+    for node_name in os.listdir(CUSTOM_NODES_PATH):
+        node_path = os.path.join(CUSTOM_NODES_PATH, node_name)
+        
+        if not os.path.isdir(node_path):
+            continue
+        
+        node_info = {
+            "name": node_name,
+            "path": node_path,
+            "has_git": False,
+            "update_available": False,
+            "commits_behind": 0,
+            "error": None
+        }
+        
+        git_dir = os.path.join(node_path, ".git")
+        if not os.path.exists(git_dir):
+            results.append(node_info)
+            continue
+        
+        node_info["has_git"] = True
+        
+        try:
+            # Fetch (quick, just headers)
+            subprocess.run(
+                ["git", "fetch", "origin", "--depth=1"],
+                capture_output=True, cwd=node_path, timeout=15
+            )
+            
+            # Check if behind
+            status = subprocess.run(
+                ["git", "status", "-uno"],
+                capture_output=True, text=True, cwd=node_path
+            )
+            
+            if "Your branch is behind" in status.stdout:
+                node_info["update_available"] = True
+                # Try to extract number
+                import re
+                match = re.search(r"by (\d+) commit", status.stdout)
+                if match:
+                    node_info["commits_behind"] = int(match.group(1))
+                else:
+                    node_info["commits_behind"] = 1
+            
+        except Exception as e:
+            node_info["error"] = str(e)
+        
+        results.append(node_info)
+    
+    return results
+
+
+def update_comfyui():
+    """Update ComfyUI via git pull. Returns (success, message)."""
+    if not os.path.exists(COMFY_PATH):
+        return False, "ComfyUI not installed"
+    
+    try:
+        logger.info("Updating ComfyUI...")
+        result = subprocess.run(
+            ["git", "pull"],
+            capture_output=True, text=True, cwd=COMFY_PATH, timeout=120
+        )
+        
+        if result.returncode == 0:
+            return True, "ComfyUI updated successfully"
+        else:
+            return False, result.stderr or result.stdout
+    except Exception as e:
+        return False, str(e)
+
+
+def update_custom_node(node_name):
+    """Update a single custom node. Returns (success, message)."""
+    node_path = os.path.join(CUSTOM_NODES_PATH, node_name)
+    
+    if not os.path.exists(node_path):
+        return False, f"Node {node_name} not found"
+    
+    try:
+        logger.info(f"Updating {node_name}...")
+        result = subprocess.run(
+            ["git", "pull"],
+            capture_output=True, text=True, cwd=node_path, timeout=60
+        )
+        
+        if result.returncode == 0:
+            return True, f"{node_name} updated"
+        else:
+            return False, result.stderr or result.stdout
+    except Exception as e:
+        return False, str(e)
+
+
+def update_all_custom_nodes():
+    """Update all custom nodes. Returns (success_count, fail_count, results)."""
+    nodes = check_custom_nodes_updates()
+    updatable = [n for n in nodes if n["update_available"]]
+    
+    success_count = 0
+    fail_count = 0
+    results = []
+    
+    for node in updatable:
+        success, msg = update_custom_node(node["name"])
+        results.append({"name": node["name"], "success": success, "message": msg})
+        if success:
+            success_count += 1
+        else:
+            fail_count += 1
+    
+    return success_count, fail_count, results
+
+
+def get_system_health_report():
+    """Get comprehensive system health report.
+    
+    Returns dict with all system status information.
+    """
+    report = {
+        "comfyui": check_comfyui_version(),
+        "custom_nodes": {
+            "total": 0,
+            "updatable": 0,
+            "nodes": []
+        },
+        "models": {
+            "total": len(MODEL_DB),
+            "missing": 0  # Would need to scan
+        },
+        "manager_version": get_local_version()
+    }
+    
+    # Custom nodes summary
+    nodes = check_custom_nodes_updates()
+    report["custom_nodes"]["total"] = len(nodes)
+    report["custom_nodes"]["updatable"] = len([n for n in nodes if n["update_available"]])
+    report["custom_nodes"]["nodes"] = nodes
+    
+    return report
+
+
 # Initialize NODE_DB and MODEL_DB on module load
 fetch_node_db()
 load_model_db()

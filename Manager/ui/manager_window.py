@@ -20,7 +20,9 @@ from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
     install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB,
     download_model, load_model_db, MODEL_DB,
-    check_for_updates, perform_update, get_local_version
+    check_for_updates, perform_update, get_local_version,
+    check_comfyui_version, check_custom_nodes_updates, 
+    update_comfyui, update_all_custom_nodes, get_system_health_report
 )
 
 
@@ -145,6 +147,11 @@ class ManagerWindow(QMainWindow):
         self.startup_frame = self._create_startup_frame()
         main_layout.addWidget(self.startup_frame)
         
+        # System Status Panel (shown after startup)
+        self.status_panel = self._create_system_status_panel()
+        self.status_panel.hide()  # Hidden until startup complete
+        main_layout.addWidget(self.status_panel)
+        
         # Main content with 3 columns
         content_splitter = QSplitter(Qt.Horizontal)
         main_layout.addWidget(content_splitter, stretch=1)
@@ -236,6 +243,91 @@ class ManagerWindow(QMainWindow):
         self.startup_progress.setRange(0, 0)
         self.startup_progress.setObjectName("startupProgress")
         layout.addWidget(self.startup_progress)
+        
+        return frame
+    
+    def _create_system_status_panel(self):
+        """Create system status panel showing ComfyUI/nodes/models status."""
+        frame = QFrame()
+        frame.setObjectName("statusPanel")
+        frame.setStyleSheet("""
+            #statusPanel {
+                background: rgba(20, 20, 40, 0.9);
+                border: 1px solid #2a2a4e;
+                border-radius: 12px;
+                padding: 15px;
+            }
+        """)
+        layout = QVBoxLayout(frame)
+        layout.setSpacing(8)
+        
+        # Title
+        title = QLabel("📊 시스템 상태")
+        title.setStyleSheet("color: #00ffcc; font-size: 14px; font-weight: bold;")
+        layout.addWidget(title)
+        
+        # Status rows
+        status_grid = QVBoxLayout()
+        status_grid.setSpacing(6)
+        
+        # ComfyUI row
+        comfy_row = QHBoxLayout()
+        self.comfy_label = QLabel("ComfyUI")
+        self.comfy_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.comfy_status = QLabel("체크 중...")
+        self.comfy_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.comfy_update_btn = QPushButton("업데이트")
+        self.comfy_update_btn.setStyleSheet("""
+            QPushButton {
+                background: #4CAF50; color: white; border: none;
+                padding: 4px 8px; border-radius: 3px; font-size: 10px;
+            }
+            QPushButton:hover { background: #45a049; }
+            QPushButton:disabled { background: #555; }
+        """)
+        self.comfy_update_btn.clicked.connect(self.handle_comfy_update)
+        self.comfy_update_btn.hide()
+        comfy_row.addWidget(self.comfy_label)
+        comfy_row.addWidget(self.comfy_status)
+        comfy_row.addStretch()
+        comfy_row.addWidget(self.comfy_update_btn)
+        status_grid.addLayout(comfy_row)
+        
+        # Custom Nodes row
+        nodes_row = QHBoxLayout()
+        self.nodes_label = QLabel("커스텀 노드")
+        self.nodes_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.nodes_status = QLabel("체크 중...")
+        self.nodes_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.nodes_update_btn = QPushButton("전체 업데이트")
+        self.nodes_update_btn.setStyleSheet("""
+            QPushButton {
+                background: #4CAF50; color: white; border: none;
+                padding: 4px 8px; border-radius: 3px; font-size: 10px;
+            }
+            QPushButton:hover { background: #45a049; }
+            QPushButton:disabled { background: #555; }
+        """)
+        self.nodes_update_btn.clicked.connect(self.handle_nodes_update)
+        self.nodes_update_btn.hide()
+        nodes_row.addWidget(self.nodes_label)
+        nodes_row.addWidget(self.nodes_status)
+        nodes_row.addStretch()
+        nodes_row.addWidget(self.nodes_update_btn)
+        status_grid.addLayout(nodes_row)
+        
+        # Models row
+        models_row = QHBoxLayout()
+        self.models_label = QLabel("모델")
+        self.models_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.models_status = QLabel("체크 중...")
+        self.models_status.setStyleSheet("color: #888; font-size: 11px;")
+        models_row.addWidget(self.models_label)
+        models_row.addWidget(self.models_status)
+        models_row.addStretch()
+        status_grid.addLayout(models_row)
+        
+        layout.addLayout(status_grid)
         
         return frame
     
@@ -502,11 +594,13 @@ class ManagerWindow(QMainWindow):
     
     def on_startup_finished(self, results):
         self.startup_frame.hide()
+        self.status_panel.show()  # Show system status panel
         self.is_ready = True
         self.run_btn.setEnabled(True)
         
         self.refresh_workflows()
         self.update_system_status()
+        self.refresh_system_status()  # Populate status panel
         
         # Check for updates
         self.check_version_updates()
@@ -841,3 +935,94 @@ class ManagerWindow(QMainWindow):
             QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
         else:
             QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
+    
+    def refresh_system_status(self):
+        """Refresh system status panel with current info."""
+        # Check ComfyUI
+        try:
+            comfy_info = check_comfyui_version()
+            if comfy_info["error"]:
+                self.comfy_status.setText(f"⚠️ {comfy_info['error']}")
+                self.comfy_status.setStyleSheet("color: #ff6b6b;")
+            elif comfy_info["update_available"]:
+                self.comfy_status.setText(f"⚠️ {comfy_info['commits_behind']}개 커밋 뒤처짐")
+                self.comfy_status.setStyleSheet("color: #ffcc00;")
+                self.comfy_update_btn.show()
+            else:
+                self.comfy_status.setText(f"✅ 최신 ({comfy_info['current_commit']})")
+                self.comfy_status.setStyleSheet("color: #4CAF50;")
+                self.comfy_update_btn.hide()
+        except Exception as e:
+            self.comfy_status.setText(f"❌ 오류: {e}")
+            self.comfy_status.setStyleSheet("color: #ff6b6b;")
+        
+        # Check Custom Nodes
+        try:
+            nodes_info = check_custom_nodes_updates()
+            total = len(nodes_info)
+            updatable = len([n for n in nodes_info if n["update_available"]])
+            
+            if updatable > 0:
+                self.nodes_status.setText(f"⚠️ {total}개 중 {updatable}개 업데이트 가능")
+                self.nodes_status.setStyleSheet("color: #ffcc00;")
+                self.nodes_update_btn.show()
+            else:
+                self.nodes_status.setText(f"✅ {total}개 모두 최신")
+                self.nodes_status.setStyleSheet("color: #4CAF50;")
+                self.nodes_update_btn.hide()
+        except Exception as e:
+            self.nodes_status.setText(f"❌ 오류: {e}")
+            self.nodes_status.setStyleSheet("color: #ff6b6b;")
+        
+        # Models count
+        self.models_status.setText(f"✅ {len(MODEL_DB)}개 등록됨")
+        self.models_status.setStyleSheet("color: #4CAF50;")
+    
+    def handle_comfy_update(self):
+        """Handle ComfyUI update button click."""
+        reply = QMessageBox.question(
+            self, "ComfyUI 업데이트",
+            "ComfyUI를 최신 버전으로 업데이트합니다.\n\n계속하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        self.comfy_update_btn.setEnabled(False)
+        self.comfy_update_btn.setText("업데이트 중...")
+        QApplication.processEvents()
+        
+        success, msg = update_comfyui()
+        
+        if success:
+            QMessageBox.information(self, "완료", "ComfyUI가 업데이트되었습니다!")
+            self.refresh_system_status()
+        else:
+            QMessageBox.warning(self, "실패", f"업데이트 실패: {msg}")
+            self.comfy_update_btn.setEnabled(True)
+            self.comfy_update_btn.setText("업데이트")
+    
+    def handle_nodes_update(self):
+        """Handle custom nodes update button click."""
+        reply = QMessageBox.question(
+            self, "커스텀 노드 업데이트",
+            "모든 커스텀 노드를 최신 버전으로 업데이트합니다.\n\n계속하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+        
+        self.nodes_update_btn.setEnabled(False)
+        self.nodes_update_btn.setText("업데이트 중...")
+        QApplication.processEvents()
+        
+        success_count, fail_count, results = update_all_custom_nodes()
+        
+        msg = f"완료!\n\n성공: {success_count}개\n실패: {fail_count}개"
+        if fail_count > 0:
+            failed_names = [r["name"] for r in results if not r["success"]]
+            msg += f"\n\n실패 목록: {', '.join(failed_names[:5])}"
+        
+        QMessageBox.information(self, "업데이트 완료", msg)
+        self.refresh_system_status()
+
