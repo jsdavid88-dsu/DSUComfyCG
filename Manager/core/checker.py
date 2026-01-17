@@ -54,6 +54,9 @@ EXT_MODEL_DB_CACHE_FILE = os.path.join(CACHE_DIR, "model_list_cache.json")
 
 FOLDER_MAPPINGS = {}
 
+# Embedded model URLs found in workflows (name -> {url, directory, source})
+EMBEDDED_MODEL_URLS = {}
+
 # ... (Built-in nodes skipped for brevity) ...
 
 def fetch_ext_model_db():
@@ -102,18 +105,30 @@ def check_model_in_db(model_name):
     """Check if a model is in our MODEL_DB or External DB. Returns (in_db, info_dict).
     
     Priority:
-    1. Local MODEL_DB (models_db.json) - Highest priority (we control this)
+    0. EMBEDDED_MODEL_URLS (from workflow properties.models) - Most accurate
+    1. Local MODEL_DB (models_db.json) - High priority (we control this)
     2. External MODEL_DB (model-list.json) - Secondary (thousands of models)
     3. HuggingFace Search - Last resort
     """
     logger.info(f"[Model Check] Looking for: {model_name}")
+    basename = os.path.basename(model_name.replace("\\", "/"))
+    
+    # 0. Check EMBEDDED_MODEL_URLS (from workflow)
+    if basename in EMBEDDED_MODEL_URLS:
+        info = EMBEDDED_MODEL_URLS[basename]
+        logger.info(f"[Model Check] ✓ Found in EMBEDDED_MODEL_URLS: {info['url'][:50]}...")
+        return True, {
+            "url": info["url"],
+            "folder": info["directory"],
+            "description": f"Embedded in workflow",
+            "source": "embedded"
+        }
     
     # 1. Local MODEL_DB Check
     if model_name in MODEL_DB:
         logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
         return True, MODEL_DB[model_name]
     
-    basename = os.path.basename(model_name.replace("\\", "/"))
     if basename in MODEL_DB:
         logger.info(f"[Model Check] ✓ Basename match in MODEL_DB: {basename}")
         return True, MODEL_DB[basename]
@@ -285,6 +300,54 @@ def load_model_db():
     except Exception as e:
         logger.error(f"Failed to load MODEL_DB: {e}")
         return False
+
+
+def save_url_to_model_db(model_name, url, folder):
+    """Save a user-provided URL to models_db.json for future use.
+    
+    Args:
+        model_name: Filename of the model
+        url: Download URL
+        folder: Target folder (e.g., 'checkpoints', 'vae')
+    
+    Returns:
+        (success, message)
+    """
+    global MODEL_DB
+    
+    try:
+        # Load current data
+        with open(MODEL_DB_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        models = data.get("models", {})
+        
+        # Add new entry
+        basename = os.path.basename(model_name.replace("\\", "/"))
+        models[basename] = {
+            "url": url,
+            "folder": folder,
+            "description": f"User-added: {basename}",
+            "source": "user_input"
+        }
+        
+        data["models"] = models
+        
+        # Save back
+        with open(MODEL_DB_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        
+        # Update in-memory DB
+        MODEL_DB[basename] = models[basename]
+        
+        logger.info(f"[MODEL_DB] Saved user URL for: {basename}")
+        return True, f"Added {basename} to models_db.json"
+        
+    except Exception as e:
+        logger.error(f"Failed to save URL to MODEL_DB: {e}")
+        return False, str(e)
+
+
 def search_huggingface(model_name):
     """Search HuggingFace for a model by name. Returns (repo_id, filename) or (None, None).
     
@@ -566,10 +629,13 @@ def scan_workflows():
 
 
 def parse_workflow(filename):
-    """Parse a workflow JSON and extract node types and model names."""
+    """Parse a workflow JSON and extract node types, model names, and embedded URLs."""
     filepath = os.path.join(WORKFLOWS_DIR, filename)
     node_types = set()
     model_names = set()
+    
+    # Global dict to store embedded model info (url + directory)
+    global EMBEDDED_MODEL_URLS
     
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -590,12 +656,30 @@ def parse_workflow(filename):
                 if node_type:
                     node_types.add(node_type)
                 
+                # Extract widgets_values for model names
                 widgets = node.get("widgets_values") or []
                 for val in widgets:
                     if isinstance(val, str):
                         lower = val.lower()
                         if lower.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf')):
                             model_names.add(val)
+                
+                # Extract embedded model URLs from properties.models
+                props = node.get("properties", {})
+                if "models" in props and isinstance(props["models"], list):
+                    for model_info in props["models"]:
+                        if isinstance(model_info, dict):
+                            name = model_info.get("name", "")
+                            url = model_info.get("url", "")
+                            directory = model_info.get("directory", "checkpoints")
+                            if name and url:
+                                EMBEDDED_MODEL_URLS[name] = {
+                                    "url": url,
+                                    "directory": directory,
+                                    "source": "workflow"
+                                }
+                                logger.info(f"[Parse] Found embedded URL for: {name} → {directory}")
+                                
     except Exception as e:
         logger.error(f"Failed to parse {filename}: {e}")
     
