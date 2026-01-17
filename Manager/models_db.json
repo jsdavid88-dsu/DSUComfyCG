@@ -212,7 +212,7 @@
         },
         "ltx-2-19b-distilled_Q4_K_M.gguf": {
             "repo_id": "Kijai/LTXV2_comfy",
-            "filename": "gguf/ltx-2-19b-distilled_Q4_K_M.gguf",
+            "filename": "diffusion_models/ltx-2-19b-distilled_Q4_K_M.gguf",
             "folder": "diffusion_models",
             "size": "10GB",
             "description": "LTX-2 19B GGUF Q4"
