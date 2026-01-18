@@ -35,77 +35,76 @@ class WorkflowValidatorDialog(QDialog):
         
         self.setWindowTitle("워크플로우 의존성 검증")
         self.setMinimumSize(700, 500)
+        self.setMinimumSize(750, 600)
         self.setStyleSheet("""
             QDialog {
-                background-color: #1e1e2e;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1b26, stop:1 #24283b);
             }
             QLabel {
-                color: #e0e0e0;
-                font-size: 13px;
+                color: #c0caf5;
+                font-size: 13px; font-weight: 500;
             }
             QLineEdit {
-                background-color: #ffffff;
-                border: 2px solid #5865f2;
-                border-radius: 6px;
+                background-color: rgba(26, 27, 38, 0.95);
+                border: 1px solid #414868;
+                border-radius: 8px;
                 padding: 10px;
-                color: #1e1e2e;
+                color: #c0caf5;
                 font-size: 13px;
             }
             QLineEdit:focus {
-                border-color: #00d4aa;
-                background-color: #f0fffc;
+                border-color: #7aa2f7;
+                background-color: rgba(36, 40, 59, 0.8);
             }
             QLineEdit::placeholder {
-                color: #888888;
+                color: #565f89;
             }
             QPushButton {
-                background-color: #5865f2;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-weight: bold;
-                font-size: 13px;
+                background: #24283b;
+                color: #c0caf5;
+                border: 1px solid #414868;
+                padding: 10px 20px;
+                border-radius: 8px;
+                font-weight: 700; font-family: 'Segoe UI', sans-serif;
             }
             QPushButton:hover {
-                background-color: #4752c4;
+                background: #414868; border-color: #7aa2f7; color: #fff;
             }
             QPushButton:disabled {
-                background-color: #4a4a5a;
-                color: #888;
+                background-color: #2f334d; color: #565f89; border-color: #414868;
             }
             QPushButton#cancelBtn {
-                background-color: #5a5a6a;
+                background-color: #24283b; color: #9aa5ce;
             }
             QPushButton#cancelBtn:hover {
-                background-color: #6a6a7a;
+                background-color: #414868; color: #c0caf5;
             }
+            
             QTreeWidget {
-                background-color: #2a2a3e;
-                border: 1px solid #3a3a5e;
-                border-radius: 6px;
-                color: #e0e0e0;
+                background: rgba(26, 27, 38, 0.95);
+                border: 1px solid #414868;
+                border-radius: 10px;
+                color: #c0caf5;
             }
             QTreeWidget::item {
-                padding: 6px;
+                padding: 8px 6px; border-bottom: 1px solid #24283b;
             }
             QTreeWidget::item:selected {
-                background-color: #3a3a5e;
+                background: rgba(122, 162, 247, 0.2); border: 1px solid #7aa2f7;
             }
             QHeaderView::section {
-                background-color: #2a2a3e;
-                color: #aaa;
-                padding: 8px;
+                background: #24283b;
+                color: #7dcfff;
+                padding: 10px;
                 border: none;
-                font-weight: bold;
+                font-weight: 700; font-size: 12px;
             }
             QScrollArea {
-                background-color: transparent;
-                border: none;
+                background: transparent; border: none;
             }
             QFrame {
-                background-color: #2a2a3e;
-                border-radius: 8px;
+                background: rgba(36, 40, 59, 0.6);
+                border-radius: 12px;
             }
         """)
         

@@ -498,96 +498,126 @@ class ManagerWindow(QMainWindow):
     def _get_stylesheet(self):
         return """
             QMainWindow {
-                background: #1e1e2e;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1b26, stop:1 #24283b);
             }
             #headerFrame {
-                background: #2a2a3e;
-                border-radius: 12px;
-                padding: 20px;
-                border: 1px solid #3a3a5e;
+                background: rgba(30, 32, 48, 0.8);
+                border-radius: 16px;
+                padding: 24px;
+                border: 1px solid rgba(115, 218, 202, 0.2);
             }
-            #titleLabel { color: #00d4aa; font-size: 26px; font-weight: bold; }
-            #systemInfo { color: #aaaaaa; font-size: 12px; }
+            #titleLabel { color: #7aa2f7; font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif; }
+            #systemInfo { color: #565f89; font-size: 13px; font-weight: 500; }
             
             #startupFrame {
-                background: rgba(0, 212, 170, 0.05);
-                border: 1px solid #00d4aa;
-                border-radius: 8px;
+                background: rgba(122, 162, 247, 0.1);
+                border: 1px solid #7aa2f7;
+                border-radius: 12px;
             }
-            #startupLabel { color: #00d4aa; font-size: 14px; }
+            #startupLabel { color: #bb9af7; font-size: 15px; font-weight: 600; }
             #startupProgress {
-                background: #1e1e2e; border: none; border-radius: 4px; height: 6px;
+                background: #1a1b26; border: none; border-radius: 6px; height: 8px;
             }
             #startupProgress::chunk {
-                background: #00d4aa; border-radius: 4px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7aa2f7, stop:1 #bb9af7);
+                border-radius: 6px;
             }
             
             QGroupBox {
-                color: #e0e0e0; font-size: 14px; font-weight: bold;
-                border: 1px solid #3a3a5e; border-radius: 8px;
-                margin-top: 24px; padding-top: 16px;
-                background: #2a2a3e;
+                color: #c0caf5; font-size: 15px; font-weight: 700;
+                border: 1px solid #414868; border-radius: 12px;
+                margin-top: 24px; padding-top: 20px;
+                background: rgba(36, 40, 59, 0.6);
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 12px; padding: 0 8px; color: #5865f2;
+                subcontrol-origin: margin; left: 16px; padding: 0 8px; color: #7dcfff;
             }
             
-            #sectionLabel { color: #5865f2; font-size: 12px; font-weight: bold; }
-            #countLabel { color: #888888; font-size: 11px; }
-            #queueSummary { color: #cccccc; font-size: 12px; padding: 10px; }
+            #sectionLabel { color: #7dcfff; font-size: 13px; font-weight: 700; }
+            #countLabel { color: #565f89; font-size: 12px; font-weight: 600; }
+            #queueSummary { color: #9aa5ce; font-size: 13px; padding: 12px; }
             
             #queueProgressFrame {
-                background: rgba(88, 101, 242, 0.05);
-                border: 1px solid #3a3a5e;
-                border-radius: 8px;
+                background: rgba(187, 154, 247, 0.1);
+                border: 1px solid #414868;
+                border-radius: 10px;
             }
             #queueProgressBar {
-                background: #1e1e2e; border: 1px solid #3a3a5e;
-                border-radius: 6px; height: 20px; text-align: center; color: #fff;
+                background: #1a1b26; border: 1px solid #414868;
+                border-radius: 8px; height: 22px; text-align: center; color: #fff; font-weight: bold;
             }
             #queueProgressBar::chunk {
-                background: #5865f2; border-radius: 5px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #bb9af7, stop:1 #f7768e);
+                border-radius: 7px;
             }
             
             QListWidget, QTreeWidget {
-                background: #1e1e2e; color: #e0e0e0;
-                border: 1px solid #3a3a5e; border-radius: 6px; font-size: 12px;
+                background: rgba(26, 27, 38, 0.95); color: #c0caf5;
+                border: 1px solid #414868; border-radius: 10px; font-size: 13px; outline: none;
             }
-            QListWidget::item { padding: 8px 10px; border-radius: 4px; margin: 2px 0; }
+            QListWidget::item { padding: 10px 14px; border-radius: 6px; margin: 4px 6px; background: transparent; }
             QListWidget::item:selected {
-                background: #3a3a5e; color: #ffffff; border: 1px solid #5865f2;
+                background: rgba(122, 162, 247, 0.2); 
+                color: #7aa2f7; 
+                border: 1px solid #7aa2f7;
             }
-            QTreeWidget::item { padding: 6px 4px; border-bottom: 1px solid #2a2a3e; }
+            QListWidget::item:hover {
+                background: rgba(122, 162, 247, 0.1);
+            }
+            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #24283b; }
             QHeaderView::section {
-                background: #2a2a3e; color: #aaaaaa; padding: 8px;
-                border: none; font-weight: bold; font-size: 11px;
+                background: #24283b; color: #7dcfff; padding: 10px;
+                border: none; font-weight: 700; font-size: 12px; text-transform: uppercase;
             }
             
-            #queueList::item { padding: 6px 8px; font-size: 11px; }
+            #queueList::item { padding: 8px 12px; font-size: 12px; }
             
-            QPushButton { border: none; border-radius: 6px; padding: 8px 16px; font-size: 12px; font-weight: bold; }
+            QPushButton { 
+                border: none; border-radius: 8px; padding: 10px 18px; 
+                font-size: 13px; font-weight: 700; font-family: 'Segoe UI', sans-serif;
+            }
+            
             #primaryBtn {
-                background: #00d4aa; color: #000000; font-size: 14px; padding: 12px 30px;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7aa2f7, stop:1 #3d59a1);
+                color: #ffffff; font-size: 15px; padding: 14px 40px;
+                border: 1px solid #7aa2f7;
             }
-            #primaryBtn:hover { background: #00e6b8; }
-            #primaryBtn:disabled { background: #333333; color: #666666; }
+            #primaryBtn:hover { 
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #89b4fa, stop:1 #587ace);
+                border-color: #bb9af7;
+            }
+            #primaryBtn:pressed { background: #3d59a1; }
+            #primaryBtn:disabled { background: #2f334d; color: #565f89; border: 1px solid #414868; }
             
-            #secondaryBtn { background: #3a3a5e; color: #ffffff; }
-            #secondaryBtn:hover { background: #4a4a6e; }
+            #secondaryBtn { background: #24283b; color: #c0caf5; border: 1px solid #414868; }
+            #secondaryBtn:hover { background: #414868; color: #fff; border-color: #565f89; }
             
-            #smallBtn { background: #3a3a5e; color: #cccccc; padding: 6px 12px; font-size: 11px; }
-            #smallBtn:hover { background: #4a4a6e; color: #ffffff; }
+            #smallBtn { background: #24283b; color: #9aa5ce; padding: 8px 14px; font-size: 12px; border: 1px solid #414868; }
+            #smallBtn:hover { background: #414868; color: #c0caf5; border-color: #7aa2f7; }
             
-            #installBtn { background: #ff6b6b; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
-            #installBtn:hover { background: #ff8787; }
+            #installBtn { 
+                background: rgba(247, 118, 142, 0.2); color: #f7768e; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(247, 118, 142, 0.5);
+            }
+            #installBtn:hover { background: rgba(247, 118, 142, 0.4); }
             
-            #downloadBtn { background: #5865f2; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
-            #downloadBtn:hover { background: #4752c4; }
+            #downloadBtn { 
+                background: rgba(122, 162, 247, 0.2); color: #7aa2f7; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(122, 162, 247, 0.5);
+            }
+            #downloadBtn:hover { background: rgba(122, 162, 247, 0.4); }
             
-            #addQueueBtn { background: #a020f0; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
-            #addQueueBtn:hover { background: #b040ff; }
+            #addQueueBtn { 
+                background: rgba(187, 154, 247, 0.2); color: #bb9af7; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(187, 154, 247, 0.5);
+            }
+            #addQueueBtn:hover { background: rgba(187, 154, 247, 0.4); }
             
-            #urlInputBtn:hover { background: #ec971f; }
+            #urlInputBtn { 
+                background: rgba(224, 175, 104, 0.2); color: #e0af68; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(224, 175, 104, 0.5);
+            }
+            #urlInputBtn:hover { background: rgba(224, 175, 104, 0.4); }
         """
         
     def show_nodes_context_menu(self, position):
