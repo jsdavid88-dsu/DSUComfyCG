@@ -26,6 +26,7 @@ from core.checker import (
     save_url_to_model_db, guess_model_folder
 )
 from ui.url_input_dialog import ModelUrlInputDialog
+from ui.workflow_validator import WorkflowValidatorDialog
 
 
 class StartupWorker(QThread):
@@ -348,6 +349,12 @@ class ManagerWindow(QMainWindow):
         sync_btn.setObjectName("smallBtn")
         sync_btn.clicked.connect(self.sync_workflows_ui)
         btn_layout.addWidget(sync_btn)
+        
+        validate_btn = QPushButton("Validate")
+        validate_btn.setObjectName("smallBtn")
+        validate_btn.setToolTip("선택한 워크플로우의 의존성을 검증합니다")
+        validate_btn.clicked.connect(self.validate_current_workflow)
+        btn_layout.addWidget(validate_btn)
         
         refresh_btn = QPushButton("Refresh")
         refresh_btn.setObjectName("smallBtn")
@@ -715,6 +722,23 @@ class ManagerWindow(QMainWindow):
         synced, skipped = sync_workflows()
         self.refresh_workflows()
         self.status_bar.showMessage(f"Synced {synced}, skipped {skipped}")
+    
+    def validate_current_workflow(self):
+        """현재 선택된 워크플로우의 의존성을 검증합니다."""
+        current = self.workflow_list.currentItem()
+        if not current:
+            QMessageBox.warning(self, "워크플로우 선택", "먼저 워크플로우를 선택하세요.")
+            return
+        
+        filename = current.data(Qt.UserRole)
+        dialog = WorkflowValidatorDialog(filename, self)
+        
+        if dialog.exec() == QDialog.Accepted and dialog.is_resolved():
+            self.status_bar.showMessage(f"✓ {filename} 의존성 검증 완료")
+            # Refresh dependencies display
+            self.check_dependencies(filename)
+        else:
+            self.status_bar.showMessage(f"✗ {filename} 검증 취소됨")
     
     def update_node_db(self):
         self.status_bar.showMessage("Refreshing databases...")
