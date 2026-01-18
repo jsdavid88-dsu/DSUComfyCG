@@ -11,10 +11,10 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
-    QGroupBox, QFrame, QApplication, QDialog, QScrollArea
+    QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QAction, QCursor
 
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
@@ -387,6 +387,8 @@ class ManagerWindow(QMainWindow):
         self.nodes_tree.setColumnWidth(1, 100)
         self.nodes_tree.setColumnWidth(2, 80)
         self.nodes_tree.setRootIsDecorated(False)
+        self.nodes_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.nodes_tree.customContextMenuRequested.connect(self.show_nodes_context_menu)
         layout.addWidget(self.nodes_tree)
         
         # Models section
@@ -406,6 +408,8 @@ class ManagerWindow(QMainWindow):
         self.models_tree.setColumnWidth(1, 100)
         self.models_tree.setColumnWidth(2, 80)
         self.models_tree.setRootIsDecorated(False)
+        self.models_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.models_tree.customContextMenuRequested.connect(self.show_models_context_menu)
         layout.addWidget(self.models_tree)
         
         return group
@@ -494,102 +498,135 @@ class ManagerWindow(QMainWindow):
     def _get_stylesheet(self):
         return """
             QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #0a0a1a, stop:1 #1a1a2e);
+                background: #1e1e2e;
             }
             #headerFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #1a1a3e, stop:0.5 #2a2a4e, stop:1 #1a1a3e);
-                border-radius: 15px;
+                background: #2a2a3e;
+                border-radius: 12px;
                 padding: 20px;
                 border: 1px solid #3a3a5e;
             }
-            #titleLabel { color: #00ffcc; font-size: 26px; font-weight: bold; }
-            #systemInfo { color: #888; font-size: 11px; }
+            #titleLabel { color: #00d4aa; font-size: 26px; font-weight: bold; }
+            #systemInfo { color: #aaaaaa; font-size: 12px; }
             
             #startupFrame {
-                background: rgba(0, 255, 200, 0.05);
-                border: 1px solid #00ffcc;
-                border-radius: 10px;
+                background: rgba(0, 212, 170, 0.05);
+                border: 1px solid #00d4aa;
+                border-radius: 8px;
             }
-            #startupLabel { color: #00ffcc; font-size: 14px; }
+            #startupLabel { color: #00d4aa; font-size: 14px; }
             #startupProgress {
-                background: #1a1a2e; border: none; border-radius: 5px; height: 6px;
+                background: #1e1e2e; border: none; border-radius: 4px; height: 6px;
             }
             #startupProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ffcc, stop:1 #00ccff);
-                border-radius: 5px;
+                background: #00d4aa; border-radius: 4px;
             }
             
             QGroupBox {
-                color: #ffffff; font-size: 14px; font-weight: bold;
-                border: 1px solid #2a2a4e; border-radius: 12px;
-                margin-top: 18px; padding-top: 18px;
-                background: rgba(20, 20, 40, 0.7);
+                color: #e0e0e0; font-size: 14px; font-weight: bold;
+                border: 1px solid #3a3a5e; border-radius: 8px;
+                margin-top: 24px; padding-top: 16px;
+                background: #2a2a3e;
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 15px; padding: 0 10px; color: #00ffcc;
+                subcontrol-origin: margin; left: 12px; padding: 0 8px; color: #5865f2;
             }
             
-            #sectionLabel { color: #00ccff; font-size: 12px; font-weight: bold; }
-            #countLabel { color: #666; font-size: 11px; }
-            #queueSummary { color: #ccc; font-size: 12px; padding: 10px; }
+            #sectionLabel { color: #5865f2; font-size: 12px; font-weight: bold; }
+            #countLabel { color: #888888; font-size: 11px; }
+            #queueSummary { color: #cccccc; font-size: 12px; padding: 10px; }
             
             #queueProgressFrame {
-                background: rgba(0, 200, 255, 0.05);
-                border: 1px solid #2a2a4e;
+                background: rgba(88, 101, 242, 0.05);
+                border: 1px solid #3a3a5e;
                 border-radius: 8px;
             }
             #queueProgressBar {
-                background: #1a1a2e; border: 1px solid #3a3a5e;
+                background: #1e1e2e; border: 1px solid #3a3a5e;
                 border-radius: 6px; height: 20px; text-align: center; color: #fff;
             }
             #queueProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ffcc, stop:1 #00ccff);
-                border-radius: 5px;
+                background: #5865f2; border-radius: 5px;
             }
             
             QListWidget, QTreeWidget {
-                background: rgba(10, 10, 25, 0.9); color: #ffffff;
-                border: 1px solid #2a2a4e; border-radius: 8px; font-size: 11px;
+                background: #1e1e2e; color: #e0e0e0;
+                border: 1px solid #3a3a5e; border-radius: 6px; font-size: 12px;
             }
             QListWidget::item { padding: 8px 10px; border-radius: 4px; margin: 2px 0; }
             QListWidget::item:selected {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ffcc, stop:1 #00ccff);
-                color: #000;
+                background: #3a3a5e; color: #ffffff; border: 1px solid #5865f2;
             }
-            QTreeWidget::item { padding: 8px 5px; border-bottom: 1px solid #1a1a2e; }
+            QTreeWidget::item { padding: 6px 4px; border-bottom: 1px solid #2a2a3e; }
             QHeaderView::section {
-                background: #1a1a3e; color: #00ccff; padding: 8px;
-                border: none; font-weight: bold; font-size: 10px;
+                background: #2a2a3e; color: #aaaaaa; padding: 8px;
+                border: none; font-weight: bold; font-size: 11px;
             }
             
             #queueList::item { padding: 6px 8px; font-size: 11px; }
             
-            QPushButton { border: none; border-radius: 8px; padding: 10px 20px; font-size: 12px; font-weight: bold; }
+            QPushButton { border: none; border-radius: 6px; padding: 8px 16px; font-size: 12px; font-weight: bold; }
             #primaryBtn {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00ffcc, stop:1 #00ccff);
-                color: #000; font-size: 14px; padding: 12px 30px;
+                background: #00d4aa; color: #000000; font-size: 14px; padding: 12px 30px;
             }
-            #primaryBtn:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #33ffdd, stop:1 #33ddff); }
-            #primaryBtn:disabled { background: #333; color: #666; }
-            #secondaryBtn { background: #2a2a4e; color: #ffffff; }
-            #secondaryBtn:hover { background: #3a3a5e; }
-            #smallBtn { background: #2a2a4e; color: #ccc; padding: 6px 12px; font-size: 11px; }
-            #smallBtn:hover { background: #3a3a5e; }
-            #installBtn { background: #ff6b6b; color: white; padding: 4px 12px; font-size: 10px; border-radius: 4px; }
-            #installBtn:hover { background: #ff8787; }
-            #downloadBtn { background: #6b9fff; color: white; padding: 4px 12px; font-size: 10px; border-radius: 4px; }
-            #downloadBtn:hover { background: #87b0ff; }
-            #addQueueBtn { background: #9b6bff; color: white; padding: 4px 12px; font-size: 10px; border-radius: 4px; }
-            #addQueueBtn:hover { background: #b087ff; }
+            #primaryBtn:hover { background: #00e6b8; }
+            #primaryBtn:disabled { background: #333333; color: #666666; }
             
-            QStatusBar { background: #0a0a1a; color: #555; border-top: 1px solid #2a2a4e; padding: 5px; }
-            QScrollBar:vertical { background: #1a1a2e; width: 8px; border-radius: 4px; }
-            QScrollBar::handle:vertical { background: #3a3a5e; border-radius: 4px; min-height: 30px; }
-            QScrollBar::handle:vertical:hover { background: #00ffcc; }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            #secondaryBtn { background: #3a3a5e; color: #ffffff; }
+            #secondaryBtn:hover { background: #4a4a6e; }
+            
+            #smallBtn { background: #3a3a5e; color: #cccccc; padding: 6px 12px; font-size: 11px; }
+            #smallBtn:hover { background: #4a4a6e; color: #ffffff; }
+            
+            #installBtn { background: #ff6b6b; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
+            #installBtn:hover { background: #ff8787; }
+            
+            #downloadBtn { background: #5865f2; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
+            #downloadBtn:hover { background: #4752c4; }
+            
+            #addQueueBtn { background: #a020f0; color: white; padding: 4px 10px; font-size: 11px; border-radius: 4px; }
+            #addQueueBtn:hover { background: #b040ff; }
+            
+            #urlInputBtn:hover { background: #ec971f; }
         """
+        
+    def show_nodes_context_menu(self, position):
+        """Show context menu for nodes tree."""
+        item = self.nodes_tree.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu(self.nodes_tree)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background-color: #5865f2; color: white; }
+        """)
+        
+        copy_action = QAction("Copy Name", self)
+        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(item.text(0)))
+        menu.addAction(copy_action)
+        
+        menu.exec(self.nodes_tree.viewport().mapToGlobal(position))
+        
+    def show_models_context_menu(self, position):
+        """Show context menu for models tree."""
+        item = self.models_tree.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu(self.models_tree)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background-color: #5865f2; color: white; }
+        """)
+        
+        copy_action = QAction("Copy Name", self)
+        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(item.text(0)))
+        menu.addAction(copy_action)
+        
+        menu.exec(self.models_tree.viewport().mapToGlobal(position))
     
     def run_startup_checks(self):
         self.startup_frame.show()

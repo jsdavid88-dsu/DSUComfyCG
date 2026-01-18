@@ -6,10 +6,10 @@ DSUComfyCG Manager - Workflow Validator Dialog
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QScrollArea, QWidget, QTreeWidget,
-    QTreeWidgetItem, QHeaderView, QMessageBox
+    QTreeWidgetItem, QHeaderView, QMessageBox, QMenu
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QAction, QCursor
 
 import os
 import sys
@@ -134,6 +134,8 @@ class WorkflowValidatorDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.resolved_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.resolved_tree.customContextMenuRequested.connect(self.show_resolved_context_menu)
         layout.addWidget(self.resolved_tree)
         
         # Unresolved section
@@ -242,11 +244,13 @@ class WorkflowValidatorDialog(QDialog):
         type_str = "🔧 노드" if dep_type == "node" else "📦 모델"
         name_label = QLabel(f"<b>{type_str}:</b> {name}")
         name_label.setStyleSheet("font-size: 14px; color: #ffffff;")
+        name_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         frame_layout.addWidget(name_label)
         
         if folder:
             folder_label = QLabel(f"📁 저장 위치: ComfyUI/models/{folder}")
             folder_label.setStyleSheet("font-size: 12px; color: #aaaaaa;")
+            folder_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             frame_layout.addWidget(folder_label)
         
         # URL input label
@@ -305,6 +309,28 @@ class WorkflowValidatorDialog(QDialog):
         )
         self.all_resolved = True
         self.accept()
+    
+        
+        menu.exec(self.resolved_tree.viewport().mapToGlobal(position))
+
+    def show_resolved_context_menu(self, position):
+        """Show context menu for resolved tree."""
+        item = self.resolved_tree.itemAt(position)
+        if not item:
+            return
+            
+        menu = QMenu(self.resolved_tree)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background-color: #5865f2; color: white; }
+        """)
+        
+        copy_action = QAction("Copy Name", self)
+        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(item.text(0)))
+        menu.addAction(copy_action)
+        
+        menu.exec(self.resolved_tree.viewport().mapToGlobal(position))
     
     def is_resolved(self):
         """모든 의존성이 해결되었는지 반환."""
