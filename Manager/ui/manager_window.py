@@ -904,16 +904,28 @@ class ManagerWindow(QMainWindow):
             item.setText(0, name if len(name) < 30 else name[:27] + "...")
             item.setToolTip(0, name)
             
-                else:
-                    item.setText(1, "Unknown")
-                    item.setForeground(1, QColor("#ffd93d"))
-                    # Add button to input URL manually
-                    btn = QPushButton("URL입력")
-                    btn.setObjectName("urlInputBtn")
-                    btn.setFixedSize(60, 24)
-                    btn.setStyleSheet("background-color: #ff9800; color: white;")
-                    btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
-                    self.models_tree.setItemWidget(item, 2, btn)
+            if model["installed"]:
+                item.setText(1, "설치됨")
+                item.setForeground(1, QColor("#00ffcc"))
+                found += 1
+            elif model["url"]:
+                item.setText(1, "다운로드 대기")
+                item.setForeground(1, QColor("#7aa2f7"))
+                btn = QPushButton("다운로드")
+                btn.setObjectName("downloadBtn")
+                btn.setFixedSize(60, 24)
+                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
+                self.models_tree.setItemWidget(item, 2, btn)
+                missing_m += 1
+            else:
+                item.setText(1, "Unknown")
+                item.setForeground(1, QColor("#ffd93d"))
+                # Add button to input URL manually
+                btn = QPushButton("URL입력")
+                btn.setObjectName("urlInputBtn")
+                btn.setFixedSize(60, 24)
+                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
+                self.models_tree.setItemWidget(item, 2, btn)
                 missing_m += 1
             
             self.models_tree.addTopLevelItem(item)
