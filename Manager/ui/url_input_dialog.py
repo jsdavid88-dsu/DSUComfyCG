@@ -21,6 +21,7 @@ class ModelUrlInputDialog(QDialog):
         
         self.setWindowTitle("모델 다운로드 URL 입력")
         self.setMinimumWidth(500)
+        self.setStyleSheet("""
             QDialog {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1b26, stop:1 #24283b);
             }
