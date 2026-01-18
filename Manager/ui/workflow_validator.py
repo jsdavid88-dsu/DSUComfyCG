@@ -206,8 +206,8 @@ class WorkflowValidatorDialog(QDialog):
                 self.resolved_tree.addTopLevelItem(item)
                 resolved_count += 1
             elif model["url"]:
-                item = QTreeWidgetItem([name[:40], "모델", "✓ URL확보"])
-                item.setForeground(2, QColor("#6b9fff"))
+                item = QTreeWidgetItem([name[:40], "모델", "✓ 다운로드 대기"])
+                item.setForeground(2, QColor("#7aa2f7"))
                 self.resolved_tree.addTopLevelItem(item)
                 resolved_count += 1
             else:

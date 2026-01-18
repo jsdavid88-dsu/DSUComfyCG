@@ -904,19 +904,6 @@ class ManagerWindow(QMainWindow):
             item.setText(0, name if len(name) < 30 else name[:27] + "...")
             item.setToolTip(0, name)
             
-            if model["installed"]:
-                item.setText(1, "Found")
-                item.setForeground(1, QColor("#00ffcc"))
-                found += 1
-            else:
-                if model["url"]:
-                    item.setText(1, "Available")
-                    item.setForeground(1, QColor("#6b9fff"))
-                    btn = QPushButton("+Queue")
-                    btn.setObjectName("addQueueBtn")
-                    btn.setFixedSize(60, 24)
-                    btn.clicked.connect(lambda c, n=name, u=model["url"]: self.add_model_to_queue(n, u))
-                    self.models_tree.setItemWidget(item, 2, btn)
                 else:
                     item.setText(1, "Unknown")
                     item.setForeground(1, QColor("#ffd93d"))

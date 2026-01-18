@@ -21,43 +21,58 @@ class ModelUrlInputDialog(QDialog):
         
         self.setWindowTitle("모델 다운로드 URL 입력")
         self.setMinimumWidth(500)
-        self.setStyleSheet("""
             QDialog {
-                background-color: #1a1a2e;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1b26, stop:1 #24283b);
             }
             QLabel {
-                color: #fff;
+                color: #c0caf5;
+                font-size: 13px; font-weight: 500;
             }
             QLineEdit {
-                background-color: #2a2a4e;
-                border: 1px solid #3a3a6e;
-                border-radius: 4px;
-                padding: 8px;
-                color: #fff;
-                font-size: 12px;
+                background-color: rgba(26, 27, 38, 0.95);
+                border: 1px solid #414868;
+                border-radius: 8px;
+                padding: 10px;
+                color: #c0caf5;
+                font-size: 13px;
             }
             QLineEdit:focus {
-                border-color: #00ffcc;
+                border-color: #7aa2f7;
+                background-color: rgba(36, 40, 59, 0.8);
+            }
+            QLineEdit::placeholder {
+                color: #565f89;
             }
             QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
+                background: #24283b;
+                color: #c0caf5;
+                border: 1px solid #414868;
                 padding: 10px 20px;
-                border-radius: 4px;
-                font-weight: bold;
+                border-radius: 8px;
+                font-weight: 700; font-family: 'Segoe UI', sans-serif;
             }
             QPushButton:hover {
-                background-color: #45a049;
+                background: #414868; border-color: #7aa2f7; color: #fff;
             }
             QPushButton#cancelBtn {
-                background-color: #555;
+                background-color: #24283b; color: #9aa5ce;
             }
             QPushButton#cancelBtn:hover {
-                background-color: #666;
+                background-color: #414868; color: #c0caf5;
             }
             QCheckBox {
-                color: #aaa;
+                color: #c0caf5; font-size: 13px; spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px; height: 18px;
+                border: 1px solid #414868; border-radius: 4px; background: #1a1b26;
+            }
+            QCheckBox::indicator:checked {
+                background: #7aa2f7; border-color: #7aa2f7;
+            }
+            QFrame {
+                background: rgba(36, 40, 59, 0.6);
+                border-radius: 12px;
             }
         """)
         
@@ -70,12 +85,13 @@ class ModelUrlInputDialog(QDialog):
         
         # Warning icon and title
         title = QLabel("⚠️ 모델을 찾을 수 없습니다")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #ffcc00;")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0af68;")
         layout.addWidget(title)
         
         # Model info
         info_frame = QFrame()
-        info_frame.setStyleSheet("background-color: #2a2a4e; border-radius: 8px; padding: 10px;")
+        # Style handled by stylesheet, but adding specific padding here if needed or relying on stylesheet
+        info_frame.setStyleSheet("background: rgba(36, 40, 59, 0.6); border-radius: 12px; padding: 12px;")
         info_layout = QVBoxLayout(info_frame)
         
         model_label = QLabel(f"<b>모델명:</b> {self.model_name}")
@@ -83,7 +99,7 @@ class ModelUrlInputDialog(QDialog):
         info_layout.addWidget(model_label)
         
         folder_label = QLabel(f"<b>저장 위치:</b> ComfyUI/models/{self.target_folder}")
-        folder_label.setStyleSheet("font-size: 13px; color: #00ffcc;")
+        folder_label.setStyleSheet("font-size: 13px; color: #7dcfff;")
         info_layout.addWidget(folder_label)
         
         layout.addWidget(info_frame)
@@ -103,7 +119,7 @@ class ModelUrlInputDialog(QDialog):
             "• https://huggingface.co/Kijai/LTXV2_comfy/resolve/main/VAE/model.safetensors<br>"
             "• https://civitai.com/api/download/models/12345"
         )
-        examples.setStyleSheet("font-size: 11px; color: #888;")
+        examples.setStyleSheet("font-size: 11px; color: #565f89;")
         examples.setWordWrap(True)
         layout.addWidget(examples)
         
