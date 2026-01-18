@@ -216,6 +216,20 @@
             "folder": "diffusion_models",
             "size": "10GB",
             "description": "LTX-2 19B GGUF Q4"
+        },
+        "gemma_3_12B_it.safetensors": {
+            "repo_id": "Comfy-Org/ltx-2",
+            "filename": "split_files/text_encoders/gemma_3_12B_it.safetensors",
+            "folder": "text_encoders",
+            "size": "24.4GB",
+            "description": "Gemma 3 12B IT Text Encoder"
+        },
+        "disneyPixarCartoonTypeA_10.safetensors": {
+            "repo_id": "ckpt/disney-pixar-cartoon-type-a",
+            "filename": "disneyPixarCartoon_v10.safetensors",
+            "folder": "checkpoints",
+            "size": "2GB",
+            "description": "Disney Pixar Cartoon Type A v1.0"
         }
     },
     "folder_mappings": {

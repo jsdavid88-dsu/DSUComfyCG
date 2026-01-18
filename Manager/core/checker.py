@@ -57,6 +57,10 @@ FOLDER_MAPPINGS = {}
 # Embedded model URLs found in workflows (name -> {url, directory, source})
 EMBEDDED_MODEL_URLS = {}
 
+# NOT_FOUND cache - models that couldn't be found (avoid re-searching)
+NOT_FOUND_CACHE = set()
+NOT_FOUND_CACHE_FILE = os.path.join(CACHE_DIR, "not_found_cache.json")
+
 # ... (Built-in nodes skipped for brevity) ...
 
 def fetch_ext_model_db():
@@ -219,6 +223,13 @@ FALLBACK_NODE_DB = {
     "Sam2Segmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
     "Sam2AutoSegmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
     "Sam2VideoSegmentation": ("ComfyUI-segment-anything-2", "https://github.com/kijai/ComfyUI-segment-anything-2"),
+    # rgthree nodes
+    "Any Switch (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
+    "Fast Groups Bypasser (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
+    "Label (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
+    "Context (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
+    "Seed (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
+    "Power Lora Loader (rgthree)": ("rgthree-comfy", "https://github.com/rgthree/rgthree-comfy"),
 }
 
 
@@ -689,6 +700,11 @@ def parse_workflow(filename):
 def check_node_installed(node_type):
     """Check if a node type is installed. Returns (installed, folder_name, git_url)."""
     import re
+    
+    # Skip UUID-like nodes (subgraphs/workflow groups)
+    # Pattern: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    if re.match(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$', node_type):
+        return True, "Builtin", None  # Treat as built-in (skip)
     
     # Builtin check
     if node_type in BUILTIN_NODES:
