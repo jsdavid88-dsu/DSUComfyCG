@@ -22,8 +22,10 @@ from core.checker import (
     download_model, load_model_db, MODEL_DB,
     check_for_updates, perform_update, get_local_version,
     check_comfyui_version, check_custom_nodes_updates, 
-    update_comfyui, update_all_custom_nodes, get_system_health_report
+    update_comfyui, update_all_custom_nodes, get_system_health_report,
+    save_url_to_model_db, guess_model_folder
 )
+from ui.url_input_dialog import ModelUrlInputDialog
 
 
 class StartupWorker(QThread):
@@ -827,6 +829,13 @@ class ManagerWindow(QMainWindow):
                 else:
                     item.setText(1, "Unknown")
                     item.setForeground(1, QColor("#ffd93d"))
+                    # Add button to input URL manually
+                    btn = QPushButton("URL입력")
+                    btn.setObjectName("urlInputBtn")
+                    btn.setFixedSize(60, 24)
+                    btn.setStyleSheet("background-color: #ff9800; color: white;")
+                    btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
+                    self.models_tree.setItemWidget(item, 2, btn)
                 missing_m += 1
             
             self.models_tree.addTopLevelItem(item)
@@ -846,6 +855,29 @@ class ManagerWindow(QMainWindow):
             self.update_queue_display()
             self.start_queue_btn.setEnabled(True)
             self.status_bar.showMessage(f"Added {name[:30]} to queue")
+    
+    def show_url_input_dialog(self, model_name):
+        """Show dialog for user to input download URL for unknown model."""
+        # Guess folder from model name
+        folder = guess_model_folder(model_name)
+        
+        dialog = ModelUrlInputDialog(model_name, folder, self)
+        if dialog.exec() == QDialog.Accepted:
+            url, save_to_db = dialog.get_result()
+            if url:
+                # Save to DB if requested
+                if save_to_db:
+                    success, msg = save_url_to_model_db(model_name, url, folder)
+                    if success:
+                        self.status_bar.showMessage(f"Saved {model_name} to DB")
+                
+                # Add to queue
+                self.add_model_to_queue(model_name, url)
+                
+                # Refresh dependencies display
+                current = self.workflow_list.currentItem()
+                if current:
+                    self.check_dependencies(current.data(Qt.UserRole))
     
     def clear_queue(self):
         self.queue_nodes = []
