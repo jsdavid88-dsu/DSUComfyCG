@@ -37,51 +37,75 @@ class WorkflowValidatorDialog(QDialog):
         self.setMinimumSize(700, 500)
         self.setStyleSheet("""
             QDialog {
-                background-color: #1a1a2e;
+                background-color: #1e1e2e;
             }
             QLabel {
-                color: #fff;
+                color: #e0e0e0;
+                font-size: 13px;
             }
             QLineEdit {
-                background-color: #2a2a4e;
-                border: 1px solid #3a3a6e;
-                border-radius: 4px;
-                padding: 6px;
-                color: #fff;
+                background-color: #ffffff;
+                border: 2px solid #5865f2;
+                border-radius: 6px;
+                padding: 10px;
+                color: #1e1e2e;
+                font-size: 13px;
             }
             QLineEdit:focus {
-                border-color: #00ffcc;
+                border-color: #00d4aa;
+                background-color: #f0fffc;
+            }
+            QLineEdit::placeholder {
+                color: #888888;
             }
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #5865f2;
                 color: white;
                 border: none;
-                padding: 10px 20px;
-                border-radius: 4px;
+                padding: 12px 24px;
+                border-radius: 6px;
                 font-weight: bold;
+                font-size: 13px;
             }
             QPushButton:hover {
-                background-color: #45a049;
+                background-color: #4752c4;
             }
             QPushButton:disabled {
-                background-color: #555;
+                background-color: #4a4a5a;
+                color: #888;
             }
             QPushButton#cancelBtn {
-                background-color: #666;
+                background-color: #5a5a6a;
+            }
+            QPushButton#cancelBtn:hover {
+                background-color: #6a6a7a;
             }
             QTreeWidget {
-                background-color: #2a2a4e;
-                border: none;
-                color: white;
+                background-color: #2a2a3e;
+                border: 1px solid #3a3a5e;
+                border-radius: 6px;
+                color: #e0e0e0;
             }
             QTreeWidget::item {
-                padding: 4px;
+                padding: 6px;
+            }
+            QTreeWidget::item:selected {
+                background-color: #3a3a5e;
             }
             QHeaderView::section {
-                background-color: #1a1a2e;
-                color: #888;
-                padding: 6px;
+                background-color: #2a2a3e;
+                color: #aaa;
+                padding: 8px;
                 border: none;
+                font-weight: bold;
+            }
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QFrame {
+                background-color: #2a2a3e;
+                border-radius: 8px;
             }
         """)
         
@@ -202,27 +226,39 @@ class WorkflowValidatorDialog(QDialog):
     def _add_unresolved_item(self, name, dep_type, folder):
         """미해결 항목 추가."""
         frame = QFrame()
-        frame.setStyleSheet("background-color: #3a3a5e; border-radius: 6px; padding: 10px;")
+        frame.setStyleSheet("""
+            QFrame {
+                background-color: #3a3a5e;
+                border: 2px solid #ff6b6b;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
         frame_layout = QVBoxLayout(frame)
-        frame_layout.setSpacing(8)
+        frame_layout.setSpacing(10)
+        frame_layout.setContentsMargins(12, 12, 12, 12)
         
         # Name and type
-        type_str = "노드" if dep_type == "node" else "모델"
+        type_str = "🔧 노드" if dep_type == "node" else "📦 모델"
         name_label = QLabel(f"<b>{type_str}:</b> {name}")
-        name_label.setStyleSheet("font-size: 13px;")
+        name_label.setStyleSheet("font-size: 14px; color: #ffffff;")
         frame_layout.addWidget(name_label)
         
         if folder:
-            folder_label = QLabel(f"<span style='color: #888;'>저장 위치: ComfyUI/models/{folder}</span>")
+            folder_label = QLabel(f"📁 저장 위치: ComfyUI/models/{folder}")
+            folder_label.setStyleSheet("font-size: 12px; color: #aaaaaa;")
             frame_layout.addWidget(folder_label)
         
+        # URL input label
+        url_label = QLabel("다운로드 URL을 입력하세요:")
+        url_label.setStyleSheet("font-size: 12px; color: #00d4aa; font-weight: bold; margin-top: 5px;")
+        frame_layout.addWidget(url_label)
+        
         # URL input
-        url_layout = QHBoxLayout()
         url_input = QLineEdit()
         url_input.setPlaceholderText("https://github.com/... 또는 https://huggingface.co/...")
         url_input.textChanged.connect(self._check_all_filled)
-        url_layout.addWidget(url_input)
-        frame_layout.addLayout(url_layout)
+        frame_layout.addWidget(url_input)
         
         self.unresolved_layout.addWidget(frame)
         self.pending_urls[name] = (dep_type, url_input, folder)
