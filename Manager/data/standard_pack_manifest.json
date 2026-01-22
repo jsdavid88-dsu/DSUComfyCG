@@ -1,0 +1,67 @@
+{
+    "pack_name": "DSU Standard VFX Pack",
+    "version": "1.0.0",
+    "description": "DSU VFX 파이프라인(Maya, Nuke) 연동을 위한 필수 워크플로우 모음",
+    "workflows": [
+        {
+            "id": "vfx_01_inpainting",
+            "name": "01. AI Inpainting (Object Removal)",
+            "category": "Cleanup",
+            "description": "영상 내 불필요한 객체를 제거하는 클린 플레이트 생성 워크플로우",
+            "file": "dsu_vfx_01_inpainting.json",
+            "key_models": [
+                "fooocus_inpainting",
+                "control_v11p_sd15_inpaint"
+            ],
+            "preview_image": "previews/vfx_01.png"
+        },
+        {
+            "id": "vfx_02_outpainting",
+            "name": "02. AI Outpainting (Set Extension)",
+            "category": "Environment",
+            "description": "기존 샷의 배경을 확장하여 세트를 넓히는 워크플로우",
+            "file": "dsu_vfx_02_outpainting.json",
+            "key_models": [
+                "control_v11p_sd15_inpaint",
+                "realvisxl_v40"
+            ],
+            "preview_image": "previews/vfx_02.png"
+        },
+        {
+            "id": "vfx_03_upscale_4k",
+            "name": "03. 4K/8K Detail Upscaler",
+            "category": "Enhancement",
+            "description": "저해상도 렌더링을 4K/8K로 업스케일링하며 디테일을 복원",
+            "file": "dsu_vfx_03_upscale.json",
+            "key_models": [
+                "4x-UltraSharp.pth",
+                "sd_xl_base_1.0.safetensors"
+            ],
+            "preview_image": "previews/vfx_03.png"
+        },
+        {
+            "id": "vfx_04_img2vid",
+            "name": "04. Image-to-Video (Motion Gen)",
+            "category": "Animation",
+            "description": "정지 이미지를 움직이는 영상으로 변환 (LTX/Hunyuan 기반)",
+            "file": "dsu_vfx_04_img2vid.json",
+            "key_models": [
+                "ltx-video-2b-v0.9.1.safetensors",
+                "t5xxl_fp16.safetensors"
+            ],
+            "preview_image": "previews/vfx_04.png"
+        },
+        {
+            "id": "vfx_05_multipass",
+            "name": "05. Multi-Pass Utility",
+            "category": "Utility",
+            "description": "이미지에서 Depth, Normal, Segmentation Mask를 추출하여 합성용 EXR로 내보내기",
+            "file": "dsu_vfx_05_multipass.json",
+            "key_models": [
+                "DepthAnythingV2",
+                "control_v11p_sd15_depth"
+            ],
+            "preview_image": "previews/vfx_05.png"
+        }
+    ]
+}

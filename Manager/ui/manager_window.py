@@ -4,6 +4,8 @@ DSUComfyCG Manager - Main Window UI (v7 - With Download Queue)
 
 import sys
 import os
+import json
+import shutil
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -11,7 +13,8 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
-    QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu
+    QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu,
+    QTabWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QAction, QCursor
@@ -88,7 +91,7 @@ class DownloadQueueWorker(QThread):
     """Background worker for downloading queue items."""
     item_started = Signal(str, int, int)  # name, index, total
     item_progress = Signal(str, object, object)  # name, downloaded, total_bytes (use object for large values)
-    item_finished = Signal(str, bool, str)  # name, success, message
+    item_finished = Signal(str, bool, str, str)  # name, success, message, warning (optional)
     all_finished = Signal()
     
     def __init__(self, nodes, models):
@@ -107,8 +110,8 @@ class DownloadQueueWorker(QThread):
                 break
             index += 1
             self.item_started.emit(f"Node: {name}", index, total)
-            success, msg = install_node(url)
-            self.item_finished.emit(f"Node: {name}", success, msg)
+            success, msg, warn = install_node(url)
+            self.item_finished.emit(f"Node: {name}", success, msg, warn or "")
         
         # Download models
         for name, url in self.models:
@@ -121,7 +124,7 @@ class DownloadQueueWorker(QThread):
                 self.item_progress.emit(name, downloaded, total_bytes)
             
             success, msg = download_model(name, progress_cb)
-            self.item_finished.emit(f"Model: {name[:30]}...", success, msg)
+            self.item_finished.emit(f"Model: {name[:30]}...", success, msg, "")
         
         self.all_finished.emit()
     
@@ -339,12 +342,20 @@ class ManagerWindow(QMainWindow):
         layout = QVBoxLayout(group)
         layout.setSpacing(10)
         
+        # Tabs for Custom vs Standard
+        self.wf_tabs = QTabWidget()
+        
+        # 1. Custom Workflows Tab
+        custom_tab = QWidget()
+        custom_layout = QVBoxLayout(custom_tab)
+        custom_layout.setContentsMargins(0, 5, 0, 0)
+        
         self.workflow_list = QListWidget()
         self.workflow_list.currentItemChanged.connect(self.on_workflow_selected)
-        layout.addWidget(self.workflow_list)
+        custom_layout.addWidget(self.workflow_list)
         
+        # Custom Sync/Refresh
         btn_layout = QHBoxLayout()
-        
         sync_btn = QPushButton("Sync")
         sync_btn.setObjectName("smallBtn")
         sync_btn.clicked.connect(self.sync_workflows_ui)
@@ -360,10 +371,114 @@ class ManagerWindow(QMainWindow):
         refresh_btn.setObjectName("smallBtn")
         refresh_btn.clicked.connect(self.refresh_workflows)
         btn_layout.addWidget(refresh_btn)
+        custom_layout.addLayout(btn_layout)
         
-        layout.addLayout(btn_layout)
+        self.wf_tabs.addTab(custom_tab, "My Workflows")
+        
+        # 2. Standard Packs Tab
+        pack_tab = QWidget()
+        pack_layout = QVBoxLayout(pack_tab)
+        pack_layout.setContentsMargins(0, 5, 0, 0)
+        
+        self.pack_list = QListWidget()
+        self.pack_list.setAlternatingRowColors(True)
+        # self.pack_list.itemClicked.connect(self.on_pack_selected) # Not needed yet
+        pack_layout.addWidget(self.pack_list)
+        
+        # Pack Install Button
+        pack_btn_layout = QHBoxLayout()
+        install_pack_btn = QPushButton("Install Selected Pack")
+        install_pack_btn.setObjectName("primaryBtn")
+        install_pack_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #10b981, stop:1 #059669);
+                border: 1px solid #10b981;
+                font-size: 13px; padding: 10px;
+            }
+            QPushButton:hover { background: #34d399; }
+        """)
+        install_pack_btn.clicked.connect(self.install_standard_pack)
+        pack_btn_layout.addWidget(install_pack_btn)
+        pack_layout.addLayout(pack_btn_layout)
+        
+        self.wf_tabs.addTab(pack_tab, "DSU Standard")
+        
+        layout.addWidget(self.wf_tabs)
+        
+        # Load standard packs
+        self.load_standard_packs()
         
         return group
+
+    def load_standard_packs(self):
+        """Load DSU Standard Packs from manifest."""
+        manifest_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "standard_pack_manifest.json")
+        if not os.path.exists(manifest_path):
+            return
+
+        try:
+            with open(manifest_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            self.pack_list.clear()
+            for wf in data.get("workflows", []):
+                item = QListWidgetItem()
+                item.setText(f"[{wf['category']}] {wf['name']}")
+                item.setToolTip(wf['description'])
+                item.setData(Qt.UserRole, wf)  # Store full wf data
+                self.pack_list.addItem(item)
+                
+        except Exception as e:
+            print(f"Error loading pack manifest: {e}")
+
+    def install_standard_pack(self):
+        """Install selected standard pack."""
+        item = self.pack_list.currentItem()
+        if not item:
+            QMessageBox.warning(self, "선택 필요", "설치할 팩을 선택해주세요.")
+            return
+            
+        wf_data = item.data(Qt.UserRole)
+        confirm = QMessageBox.question(
+            self, "설치 확인",
+            f"'{wf_data['name']}' 패키지를 설치하시겠습니까?\n\n"
+            f"설명: {wf_data['description']}\n"
+            "설치 후 자동으로 의존성 검사를 시작합니다.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        
+        if confirm != QMessageBox.Yes:
+            return
+            
+        # Copy source json to workflows folder
+        src_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "workflows", wf_data['file'])
+        target_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ComfyUI", "user", "default", "workflows")
+        os.makedirs(target_dir, exist_ok=True)
+        
+        target_file = os.path.join(target_dir, wf_data['file'])
+        
+        try:
+            if not os.path.exists(src_file):
+                 QMessageBox.critical(self, "오류", f"소스 파일을 찾을 수 없습니다:\n{src_file}")
+                 return
+                 
+            shutil.copy2(src_file, target_file)
+            
+            # Switch to 'My Workflows' and select the new file
+            self.refresh_workflows()
+            self.wf_tabs.setCurrentIndex(0)
+            
+            # Find and select the item
+            items = self.workflow_list.findItems(wf_data['file'], Qt.MatchContains)
+            if items:
+                self.workflow_list.setCurrentItem(items[0])
+                # Trigger validation automatically
+                self.validate_current_workflow()
+                
+            QMessageBox.information(self, "성공", f"'{wf_data['name']}' 설치가 완료되었습니다.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "설치 실패", f"오류 발생: {str(e)}")
     
     def _create_dependency_panel(self):
         group = QGroupBox("Dependencies")
@@ -1018,9 +1133,12 @@ class ManagerWindow(QMainWindow):
             self.queue_detail_label.setText(f"{mb_down:.1f} MB / {mb_total:.1f} MB")
         QApplication.processEvents()
     
-    def on_queue_item_finished(self, name, success, message):
+    def on_queue_item_finished(self, name, success, message, warning):
         status = "✓" if success else "✗"
-        self.status_bar.showMessage(f"{status} {name}: {message}")
+        display_msg = f"{status} {name}: {message}"
+        if warning:
+            display_msg += f" ⚠️ {warning[:50]}"
+        self.status_bar.showMessage(display_msg)
     
     def on_queue_all_finished(self):
         self.queue_progress_bar.setValue(100)

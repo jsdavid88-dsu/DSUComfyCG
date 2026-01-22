@@ -14,6 +14,16 @@ try:
 except ImportError:
     requests = None
 
+import re
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from importlib.metadata import version, PackageNotFoundError
+try:
+    from packaging import specifiers, version as packaging_version
+except ImportError:
+    specifiers = None
+    packaging_version = None
+
 logging.basicConfig(level=logging.INFO, format='[DSUComfyCG] %(message)s')
 logger = logging.getLogger("Checker")
 
@@ -507,11 +517,84 @@ def guess_model_folder(filename):
 
 
 
-def download_model(model_name, progress_callback=None):
-    """Download a model from HuggingFace using huggingface_hub library.
+def download_chunk(url, start, end, target_path, session, file_lock):
+    """Download a specific range of a file with thread-safe file writing."""
+    headers = {"Range": f"bytes={start}-{end}"}
+    max_retries = 3
     
-    Falls back to direct URL download if huggingface_hub is not available.
-    Returns (success, message).
+    for attempt in range(max_retries):
+        try:
+            response = session.get(url, headers=headers, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            with file_lock:
+                with open(target_path, "r+b") as f:
+                    f.seek(start)
+                    f.write(response.content)
+            return True
+        except Exception as e:
+            logger.warning(f"Chunk download failed ({start}-{end}), attempt {attempt+1}/{max_retries}: {e}")
+            if attempt == max_retries - 1:
+                logger.error(f"Chunk download permanently failed ({start}-{end})")
+                return False
+    return False
+
+def download_model_parallel(url, target_path, total_size, progress_callback=None, threads=4):
+    """Download a model using multiple threads (Range headers) with proper locking."""
+    if not requests:
+        return False, "requests not available"
+
+    # Initialize file with zeros
+    try:
+        with open(target_path, "wb") as f:
+            f.truncate(total_size)
+    except Exception as e:
+        return False, f"Failed to initialize file: {e}"
+
+    chunk_size = total_size // threads
+    ranges = []
+    for i in range(threads):
+        start = i * chunk_size
+        end = (start + chunk_size - 1) if i < threads - 1 else total_size - 1
+        ranges.append((start, end))
+
+    file_lock = threading.Lock()
+    session = requests.Session()
+    
+    # Check if range is supported
+    try:
+        head = session.head(url, allow_redirects=True, timeout=10)
+        if head.headers.get('Accept-Ranges') != 'bytes' and 'content-range' not in head.headers:
+            logger.info("Server does not support Range headers, falling back to sequential.")
+            return False, "Range not supported"
+    except Exception as e:
+        logger.debug(f"HEAD request failed, attempting parallel anyway: {e}")
+
+    with ThreadPoolExecutor(max_workers=threads) as executor:
+        futures = []
+        for i, (start, end) in enumerate(ranges):
+            futures.append(executor.submit(download_chunk, url, start, end, target_path, session, file_lock))
+        
+        results = [f.result() for f in futures]
+    
+    if all(results):
+        # Notify completion
+        if progress_callback:
+            progress_callback(total_size, total_size)
+        return True, "Download successful"
+    else:
+        # Clean up on failure
+        try:
+            if os.path.exists(target_path):
+                os.remove(target_path)
+        except Exception:
+            pass
+        return False, "One or more chunks failed to download"
+
+def download_model(model_name, progress_callback=None):
+    """Download a model from HuggingFace or direct URL.
+    
+    Uses parallel downloading if file size > 50MB and server supports it.
     """
     # Check if in our DB
     in_db, info = check_model_in_db(model_name)
@@ -537,7 +620,8 @@ def download_model(model_name, progress_callback=None):
     # Create directory if needed
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     
-    # Try huggingface_hub first (preferred method)
+    url = info.get("url")
+    # If using huggingface_hub, we use their built-in download (no parallel for now)
     repo_id = info.get("repo_id")
     hf_filename = info.get("filename") or info.get("hf_filename")
     
@@ -545,36 +629,16 @@ def download_model(model_name, progress_callback=None):
         try:
             from huggingface_hub import hf_hub_download
             logger.info(f"Downloading {filename} via huggingface_hub...")
-            logger.info(f"Repo: {repo_id}, File: {hf_filename}")
-            
-            # Download to target directory
             local_path = hf_hub_download(
                 repo_id=repo_id,
                 filename=hf_filename,
                 local_dir=target_dir,
                 local_dir_use_symlinks=False
             )
-            
-            # Move to correct location if needed (hf_hub might create subdirs)
-            actual_file = os.path.join(target_dir, filename)
-            if local_path != actual_file and os.path.exists(local_path):
-                import shutil
-                shutil.move(local_path, actual_file)
-            
-            if os.path.exists(target_path):
-                actual_size = os.path.getsize(target_path)
-                logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB)")
-                return True, f"Downloaded {filename}"
-            else:
-                return False, "Download completed but file not found"
-                
-        except ImportError:
-            logger.warning("huggingface_hub not installed, trying direct URL...")
+            return True, f"Downloaded {filename}"
         except Exception as e:
             logger.warning(f"huggingface_hub failed: {e}, trying direct URL...")
-    
-    # Fallback to direct URL download
-    url = info.get("url")
+
     if not url:
         return False, "No download URL available"
     
@@ -583,46 +647,36 @@ def download_model(model_name, progress_callback=None):
     
     try:
         logger.info(f"Downloading {filename}...")
-        logger.info(f"URL: {url}")
-        logger.info(f"Target: {target_path}")
-        
         session = requests.Session()
         response = session.get(url, stream=True, timeout=60, allow_redirects=True)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
-        logger.info(f"Content-Length: {total_size} bytes ({total_size // (1024*1024)}MB)")
         
-        if total_size == 0:
-            return False, "Server returned empty content-length"
-        
+        # Parallel download if > 50MB
+        if total_size > 50 * 1024 * 1024:
+            logger.info(f"Large file ({total_size // (1024*1024)}MB), attempting parallel download...")
+            success, msg = download_model_parallel(url, target_path, total_size, progress_callback)
+            if success:
+                return True, f"Downloaded {filename} (Parallel)"
+            else:
+                logger.warning(f"Parallel download failed: {msg}. Falling back to sequential.")
+
+        # Sequential fallback
         downloaded = 0
         last_reported = 0
-        
         with open(target_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
-                    
                     if progress_callback and total_size > 0:
-                        display_downloaded = min(downloaded, total_size)
                         if downloaded - last_reported >= 1024 * 1024:
-                            progress_callback(display_downloaded, total_size)
+                            progress_callback(downloaded, total_size)
                             last_reported = downloaded
         
-        actual_size = os.path.getsize(target_path)
-        if actual_size < MIN_FILE_SIZE:
-            os.remove(target_path)
-            return False, f"Downloaded file too small ({actual_size} bytes)"
-        
-        logger.info(f"Downloaded {filename} ({actual_size // (1024*1024)}MB)")
         return True, f"Downloaded {filename}"
     
-    except requests.exceptions.RequestException as e:
-        if os.path.exists(target_path):
-            os.remove(target_path)
-        return False, f"Network error: {str(e)}"
     except Exception as e:
         if os.path.exists(target_path):
             os.remove(target_path)
@@ -830,42 +884,186 @@ def check_workflow_dependencies(filename):
     }
 
 
-def install_node(git_url):
-    """Install a custom node from git URL."""
-    if not git_url:
-        return False, "No URL provided"
-    
-    repo_name = git_url.rstrip('/').split("/")[-1].replace(".git", "")
-    target_path = os.path.join(CUSTOM_NODES_PATH, repo_name)
-    
-    if os.path.exists(target_path):
-        return True, f"{repo_name} already exists"
-    
+def analyze_requirements(req_path):
+    """Parse a requirements.txt file and return a list of (package, specifier) tuples."""
+    requirements = []
+    if not os.path.exists(req_path):
+        return requirements
+        
     try:
-        subprocess.check_call(
-            ["git", "clone", "--depth", "1", git_url, target_path],
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-        )
-        
-        # Install requirements
-        req_file = os.path.join(target_path, "requirements.txt")
-        if os.path.exists(req_file) and os.path.getsize(req_file) > 0:
-            subprocess.run(
-                [PYTHON_PATH, "-m", "pip", "install", "-r", req_file, "--quiet"],
-                capture_output=True, encoding='utf-8', errors='replace'
-            )
-        
-        # Run install.py if exists
-        install_py = os.path.join(target_path, "install.py")
-        if os.path.exists(install_py):
-            subprocess.run(
-                [PYTHON_PATH, install_py],
-                capture_output=True, encoding='utf-8', errors='replace'
-            )
-        
-        return True, f"Installed {repo_name}"
+        with open(req_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                # Simple parser for "pkg>=1.0.0" or "pkg==1.0.0"
+                # Exclude URL-based requirements for now
+                if '://' in line:
+                    continue
+                
+                # Split on common specifiers
+                parts = re.split(r'[<>=!~]', line, 1)
+                pkg_name = parts[0].strip().replace('_', '-') # Normalize package name
+                spec = line[len(parts[0]):].strip()
+                requirements.append((pkg_name, spec))
     except Exception as e:
-        return False, str(e)
+        logger.error(f"Error parsing requirements: {e}")
+        
+    return requirements
+
+def check_dependency_conflicts(requirements):
+    """Check if any of the given requirements conflict with currently installed packages.
+    
+    Returns a list of conflict messages.
+    """
+    conflicts = []
+    # Import these dynamically to avoid circular dependencies or unnecessary imports
+    try:
+        from packaging import version as packaging_version
+        from packaging import specifiers
+        from importlib.metadata import version, PackageNotFoundError
+    except ImportError:
+        logger.warning("packaging or importlib.metadata module not available, skipping conflict check")
+        return conflicts
+
+    for pkg, spec in requirements:
+        try:
+            current_ver = version(pkg)
+            if not spec:
+                continue
+                
+            spec_obj = specifiers.SpecifierSet(spec)
+            ver_obj = packaging_version.parse(current_ver)
+            
+            if ver_obj not in spec_obj:
+                conflicts.append(f"Conflict: {pkg} (Installed: {current_ver}, Required: {spec})")
+        except PackageNotFoundError:
+            # Package not installed, no conflict (it will be installed)
+            continue
+        except Exception as e:
+            logger.debug(f"Error checking {pkg}: {e}")
+            
+    return conflicts
+
+def snapshot_packages():
+    """Take a snapshot of currently installed packages for potential rollback."""
+    try:
+        result = subprocess.run([PYTHON_PATH, "-m", "pip", "freeze"], capture_output=True, text=True, timeout=60)
+        if result.returncode == 0:
+            packages = {}
+            for line in result.stdout.strip().split('\n'):
+                if '==' in line:
+                    name, ver = line.split('==')
+                    packages[name.lower()] = ver
+            return packages
+    except Exception as e:
+        logger.warning(f"Failed to snapshot packages: {e}")
+    return {}
+
+def restore_packages(snapshot, changed_packages):
+    """Attempt to restore packages to their snapshot versions.
+    
+    Args:
+        snapshot: Dict of {package_name: version} from before install
+        changed_packages: List of package names that were changed
+    """
+    restored_count = 0
+    for pkg in changed_packages:
+        pkg_lower = pkg.lower()
+        if pkg_lower in snapshot:
+            old_ver = snapshot[pkg_lower]
+            logger.info(f"Rolling back {pkg} to {old_ver}...")
+            try:
+                subprocess.run(
+                    [PYTHON_PATH, "-m", "pip", "install", f"{pkg}=={old_ver}", "--quiet"],
+                    capture_output=True, timeout=120
+                )
+                restored_count += 1
+            except Exception as e:
+                logger.warning(f"Failed to restore {pkg}: {e}")
+    return restored_count
+
+def install_node(git_url, enable_rollback=True):
+    """Install a custom node by cloning its git repository.
+    
+    Args:
+        git_url: URL of the git repository
+        enable_rollback: If True, attempt to restore packages on severe conflict
+    """
+    if not git_url:
+        return False, "No URL provided", None
+
+    folder_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
+    target_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+
+    if os.path.exists(target_path):
+        return True, f"Already installed at {folder_name}", None
+
+    # Take snapshot before installation for potential rollback
+    pre_snapshot = snapshot_packages() if enable_rollback else {}
+    conflicts = []
+
+    try:
+        logger.info(f"Cloning {git_url} into {folder_name}...")
+        subprocess.check_call(["git", "clone", git_url, target_path])
+        
+        # Dependency analysis
+        req_path = os.path.join(target_path, "requirements.txt")
+        if os.path.exists(req_path):
+            requirements = analyze_requirements(req_path)
+            conflicts = check_dependency_conflicts(requirements)
+            
+            if conflicts:
+                msg = "\n".join(conflicts)
+                logger.warning(f"Dependency conflicts detected for {folder_name}:\n{msg}")
+            
+            logger.info(f"Installing dependencies for {folder_name}...")
+            subprocess.check_call([PYTHON_PATH, "-m", "pip", "install", "-r", req_path])
+            
+            # Post-install check
+            try:
+                logger.info(f"Verifying environment health...")
+                check_res = subprocess.run([PYTHON_PATH, "-m", "pip", "check"], capture_output=True, text=True)
+                if check_res.returncode != 0:
+                    broken_msg = check_res.stdout.strip()
+                    logger.warning(f"Environment has broken dependencies:\n{broken_msg}")
+                    conflicts.append(f"Post-install: {broken_msg[:100]}")
+                    
+                    # Auto-rollback if enabled and severe breakage detected
+                    if enable_rollback and pre_snapshot:
+                        # Parse which packages were changed
+                        post_snapshot = snapshot_packages()
+                        changed = []
+                        for pkg, ver in post_snapshot.items():
+                            if pkg in pre_snapshot and pre_snapshot[pkg] != ver:
+                                changed.append(pkg)
+                        
+                        if changed:
+                            logger.info(f"Attempting rollback of {len(changed)} changed packages...")
+                            restored = restore_packages(pre_snapshot, changed)
+                            if restored > 0:
+                                conflicts.append(f"Rolled back {restored} package(s) to restore stability.")
+            except Exception as e:
+                logger.debug(f"Post-install check failed: {e}")
+        
+        # Look for install.py
+        install_script = os.path.join(target_path, "install.py")
+        if os.path.exists(install_script):
+            logger.info(f"Running install.py for {folder_name}...")
+            subprocess.check_call([PYTHON_PATH, install_script])
+            
+        warning_msg = "\n".join(conflicts) if conflicts else None
+        return True, f"Successfully installed {folder_name}", warning_msg
+    except Exception as e:
+        logger.error(f"Failed to install {folder_name}: {e}")
+        # Clean up failed clone
+        if os.path.exists(target_path):
+            try:
+                import shutil
+                shutil.rmtree(target_path)
+            except Exception:
+                pass
+        return False, str(e), None
 
 
 def get_system_status():
