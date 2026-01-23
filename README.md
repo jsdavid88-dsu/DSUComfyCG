@@ -304,14 +304,18 @@ Phase 3 ░░░░░░░░░░░░░░░░░░░░   0%  ⏳ D
 
 MIT License - 동서대학교 CG 교육용
 
-Copyright (c) 2026 DSU VFX Lab
+Copyright (c) 2026 동서대학교 글로컬대학30 가상융합기술연구원 & 빨간고양이단주식회사
 
 ---
 
 <div align="center">
+
+**공동연구:** 동서대학교 글로컬대학30 가상융합기술연구원 & 빨간고양이단주식회사 ([redcatgangs.com](https://redcatgangs.com))
 
 Made with ❤️ for VFX Artists
 
 [⬆ 맨 위로](#dsucomfycg)
 
 </div>
+
+
