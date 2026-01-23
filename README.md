@@ -215,6 +215,31 @@ VFX 작업에 필수적인 워크플로우 템플릿:
 | Image-to-Video | 정지 이미지에서 영상 생성 |
 | Multi-Pass | Depth/Normal/Mask 추출 |
 
+### 🔒 Gated 모델 안내
+
+일부 모델은 HuggingFace에서 **라이선스 동의 후에만** 다운로드 가능합니다:
+
+| 모델 | 워크플로우 | 해결 방법 |
+|------|-----------|----------|
+| **FLUX.1** | 고품질 이미지 생성 | HuggingFace 가입 → 라이선스 동의 → 토큰 발급 |
+| **LTX-Video** | Image-to-Video | HuggingFace 가입 → 라이선스 동의 → 직접 다운로드 |
+| **Stable Diffusion 3** | SD3 워크플로우 | Stability AI 약관 동의 필요 |
+
+**해결 방법 (택1):**
+
+1. **HuggingFace 토큰 사용**
+   ```powershell
+   # 환경변수 설정
+   $env:HF_TOKEN = "hf_your_token_here"
+   ```
+
+2. **직접 다운로드**
+   - [HuggingFace](https://huggingface.co)에서 해당 모델 페이지 방문
+   - 라이선스 동의 후 수동 다운로드
+   - `ComfyUI/models/checkpoints/` 폴더에 배치
+
+> 💡 **대부분의 모델 (SDXL, ControlNet, LoRA 등)은 토큰 없이 자동 다운로드됩니다.**
+
 ---
 
 ## 🛠️ 문제해결
