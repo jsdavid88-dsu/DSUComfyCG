@@ -10,7 +10,7 @@
 
 동서대학교 VFX/Animation 파이프라인을 위한 ComfyUI 통합 설치 & 워크플로우 배포 시스템
 
-[설치하기](#-설치) • [매니저 사용법](#-매니저-사용법) • [로드맵](docs/roadmap.md) • [문제해결](#-문제해결)
+[설치하기](#-설치) • [매니저 사용법](#-매니저-사용법) • [Maya Bridge](docs/maya_bridge_guide.md) • [로드맵](docs/roadmap.md) • [문제해결](#-문제해결)
 
 </div>
 
@@ -287,6 +287,15 @@ Phase 3 ░░░░░░░░░░░░░░░░░░░░   0%  ⏳ D
 - 🎬 **Cinematic Prompt Builder**: 시각적 카메라/조명 선택기
 - 🧊 **3D Reconstruction**: Apple SHARP, Gaussian Splatting
 - 🌉 **Maya Bridge**: 양방향 DCC 연동
+
+---
+
+## 📚 문서
+
+- **[Installation Guide](docs/installation.md)**: 상세 설치 가이드
+- **[Manager Guide](docs/manager_guide.md)**: 매니저 기능 및 사용법
+- **[Maya Bridge Guide](docs/maya_bridge_guide.md)**: Maya 연동 및 3D 워크플로우
+- **[Roadmap](docs/roadmap.md)**: 전체 개발 계획
 
 ---
 
