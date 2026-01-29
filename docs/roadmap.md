@@ -112,6 +112,40 @@ ComfyUI-TripoSR:
 
 ---
 
+## 🆕 2.7 Instant 3D Cinematography (New)
+
+**"Single Image to 3D Video" - SAM 3D & Uni3C 통합 파이프라인**
+
+Pre-viz 및 Shot 생성을 위한 **즉각적인 3D 에셋 생성 및 시네마틱 카메라 제어** 시스템입니다.
+
+### 🌐 핵심 기술 스펙
+
+#### A. SAM 3D (Asset & Layout Generation)
+*   **Role:** Single Image to 3D Mesh (GLB/OBJ)
+*   **Function:**
+    *   단일 RGB에서 즉시 3D Mesh & Texture 추출
+    *   인물 이미지 → Skeleton/Rigging Data 생성
+*   **Goal:** 2D 컨셉 아트를 기반으로 **물리적 공간감(Occupancy)**이 있는 3D 씬 및 더미 에셋 자동 생성
+
+#### B. Uni3C (Camera Control & Neural Rendering)
+*   **Role:** Unified 3D Condition for Video
+*   **Function:**
+    *   **3D Trajectory Control:** Camera Matrix(XYZ, Rotation) → 비디오 생성 제어
+    *   **Unified Guidance:** 카메라 무빙 + 캐릭터 포즈 동시 제어
+*   **Goal:** **"Instant Cinematography"** - 감독이 의도한 정확한 카메라 워킹 구현
+
+### 🎬 Workflow Architecture
+
+**Pipeline: Instant 3D Cinematography Module**
+
+1.  **Input:** 2D Concept Image (Midjourney/SD)
+2.  **Step 1 (Geometry):** SAM 3D Node → 3D Scene/Body Mesh 변환
+3.  **Step 2 (Directing):** ComfyUI 3D Viewer에서 카메라 무빙(Orbit, Zoom) 레코딩
+4.  **Step 3 (Synthesis):** Uni3C Node (Camera Data + Mesh) → Wan 2.1 Video Generation
+5.  **Output:** 3D Camera Controlled Video Clip
+
+---
+
 ## 🎯 VFX 활용 시나리오
 
 ### Use Case 1: Concept-to-Layout (콘셉트 → 3D 레이아웃)
@@ -255,6 +289,5 @@ Phase 3 ░░░░░░░░░░░░░░░░░░░░   0%  ⏳ �
 ---
 *Last Updated: 2026-01-23*
 
-**공동연구:** 동서대학교 글로컬대학30 가상융합기술연구원 & 빨간고양이단주식회사 ([redcatgangs.com](https://redcatgangs.com))
-
+**Developed by:** 동서대학교 VFX Lab & REDCATGANGS (빨간고양이단주식회사)
 
