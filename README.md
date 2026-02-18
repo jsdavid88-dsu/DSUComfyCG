@@ -10,15 +10,114 @@
 
 동서대학교 VFX/Animation 파이프라인을 위한 ComfyUI 통합 설치 & 워크플로우 배포 시스템
 
+**Language / 언어:** [English](#english-version) • [한국어](#한국어-버전)
+
 [설치하기](#-설치) • [매니저 사용법](#-매니저-사용법) • [Maya Bridge](docs/maya_bridge_guide.md) • [로드맵](docs/roadmap.md) • [문제해결](#-문제해결)
 
 </div>
 
 ---
 
+# English Version
+
+## 🎯 Overview
+
+**DSUComfyCG** is a **one-click installation and workflow deployment system** for ComfyUI, purpose-built for Dongseo University's VFX/Animation pipeline. It **automatically manages nodes and models** required for professional VFX workflows.
+
+### Key Features at a Glance
+
+| Feature | Description |
+|---------|-------------|
+| 🔧 **One-Click Install** | Automatically install Python, PyTorch, ComfyUI |
+| 📦 **Auto Dependency Resolver** | Automatically detect and install nodes/models needed for workflows |
+| 🛡️ **Safety Net** | Detect dependency conflicts and auto-rollback on errors |
+| ⚡ **Parallel Download** | 4-thread parallel download for large models |
+| 🎨 **Deep Space UI** | Dark theme optimized for VFX artists |
+| 🧳 **Portable** | Move the entire installation via USB |
+
+### Quick Start
+
+```powershell
+git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
+cd DSUComfyCG
+DSUComfyCG-Install.bat
+Helper\run_comfy.bat
+```
+
+Then open your browser and go to `http://localhost:8188`
+
+### System Requirements
+
+- **OS**: Windows 10/11 (64-bit)
+- **GPU**: NVIDIA GPU (CUDA 12.x support)
+- **RAM**: 16GB recommended
+- **Storage**: Minimum 50GB (100GB+ with models)
+- **Internet**: Required for initial installation
+
+For detailed installation instructions, see [Installation Guide](docs/installation.md).
+
+---
+
+## 🚀 Installation
+
+### Requirements
+
+- **OS**: Windows 10/11 (64-bit)
+- **GPU**: NVIDIA GPU (CUDA 12.x support)
+- **RAM**: 16GB recommended minimum
+- **Storage**: Minimum 50GB (100GB+ with models)
+- **Internet**: Required for initial setup
+
+### Installation Steps
+
+#### 1. Download Repository
+
+```powershell
+git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
+cd DSUComfyCG
+```
+
+Or download ZIP from [Releases](https://github.com/jsdavid88-dsu/DSUComfyCG/releases)
+
+#### 2. Run Installation Script
+
+```powershell
+DSUComfyCG-Install.bat
+```
+
+What gets installed:
+- ✅ Portable Python 3.12
+- ✅ PyTorch 2.5.1 + CUDA 12.8
+- ✅ ComfyUI Core
+- ✅ ComfyUI-Manager
+- ✅ VideoHelperSuite, IPAdapter, ControlNet and other essential nodes
+
+#### 3. Run ComfyUI
+
+```powershell
+Helper\run_comfy.bat
+```
+
+Open your browser and go to `http://localhost:8188`
+
+### Manager Usage (Quick Reference)
+
+```powershell
+# Run the Manager GUI
+Manager\run_manager.bat
+```
+
+The Manager handles workflow validation, node installation, and model management automatically.
+
+For more details, see the [Manager Guide](docs/manager_guide.md).
+
+---
+
+# 한국어 버전
+
 ## 🎯 개요
 
-DSUComfyCG는 복잡한 ComfyUI 환경을 **원클릭**으로 설치하고, VFX 워크플로우에 필요한 **노드와 모델을 자동으로 관리**하는 시스템입니다.
+**DSUComfyCG**는 복잡한 ComfyUI 환경을 **원클릭**으로 설치하고, VFX 워크플로우에 필요한 **노드와 모델을 자동으로 관리**하는 시스템입니다. 동서대학교 VFX/Animation 파이프라인을 위해 특화되었습니다.
 
 ### 핵심 특징
 
@@ -30,6 +129,25 @@ DSUComfyCG는 복잡한 ComfyUI 환경을 **원클릭**으로 설치하고, VFX 
 | ⚡ **병렬 다운로드** | 대용량 모델 4-thread 병렬 다운로드 |
 | 🎨 **Deep Space UI** | VFX 아티스트를 위한 다크 테마 |
 | 🧳 **포터블** | USB로 통째로 이동 가능 |
+
+### 빠른 시작
+
+```powershell
+git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
+cd DSUComfyCG
+DSUComfyCG-Install.bat
+Helper\run_comfy.bat
+```
+
+브라우저에서 `http://localhost:8188` 접속
+
+### 시스템 요구사항
+
+- **OS**: Windows 10/11 (64-bit)
+- **GPU**: NVIDIA GPU (CUDA 12.x 지원)
+- **RAM**: 16GB 이상 권장
+- **저장공간**: 최소 50GB (모델 포함 시 100GB+)
+- **인터넷**: 첫 설치 시 필요
 
 ---
 
@@ -323,8 +441,6 @@ Copyright (c) 2026 동서대학교 글로컬대학30 가상융합기술연구원
 
 Made with ❤️ for VFX Artists
 
-[⬆ 맨 위로](#dsucomfycg)
+[⬆ 맨 위로](#dsucomfycg) | [English](#english-version) | [한국어](#한국어-버전)
 
 </div>
-
-
