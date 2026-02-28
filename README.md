@@ -109,7 +109,10 @@ Manager\run_manager.bat
 
 The Manager handles workflow validation, node installation, and model management automatically.
 
-For more details, see the [Manager Guide](docs/manager_guide.md).
+**🔥 NEW in v1.1: Advanced Model Downloader Features!**
+For an in-depth guide on the new 3-column UI, Tavily AI Search, and manual source management, please see the **[DSUComfyCG Manager User Manual](user_manual.md)**.
+
+For older legacy information, see the [Manager Guide](docs/manager_guide.md).
 
 ---
 
@@ -196,6 +199,9 @@ Helper\run_comfy.bat
 ---
 
 ## 🎛️ 매니저 사용법
+
+**📢 신규 기능 (v1.1 업데이트): 스마트 3단 레이아웃 및 AI 고급 검색 탑재!**
+새롭게 개편된 UI와 Tavily AI 엔진을 활용한 고급 모델 탐색, 수동 다운로드 소스 추가, 모델 캐싱 관리에 대한 자세한 설명과 튜토리얼은 **[➡️ DSUComfyCG Manager 사용자 설명서](user_manual.md)** 를 클릭하여 반드시 확인해주세요!
 
 DSUComfyCG Manager는 워크플로우의 의존성을 분석하고 자동으로 설치하는 GUI 도구입니다.
 
