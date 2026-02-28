@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
     QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu,
-    QTabWidget, QLineEdit, QCheckBox, QFormLayout, QComboBox,
+    QStackedWidget, QSpacerItem, QSizePolicy, QTabWidget,
+    QLineEdit, QCheckBox, QFormLayout, QComboBox,
     QFileDialog, QHeaderView
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
@@ -161,27 +162,39 @@ class ManagerWindow(QMainWindow):
         
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(15)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # 1. Sidebar
+        self.sidebar_widget = self._create_sidebar()
+        main_layout.addWidget(self.sidebar_widget)
+        
+        # 2. Main Content Area
+        content_widget = QWidget()
+        content_widget.setObjectName("mainContentArea")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(24, 24, 24, 24)
+        content_layout.setSpacing(20)
+        main_layout.addWidget(content_widget, stretch=1)
         
         header = self._create_header()
-        main_layout.addWidget(header)
+        content_layout.addWidget(header)
         
         self.startup_frame = self._create_startup_frame()
-        main_layout.addWidget(self.startup_frame)
+        content_layout.addWidget(self.startup_frame)
         
         # System Status Panel (shown after startup)
         self.status_panel = self._create_system_status_panel()
         self.status_panel.hide()  # Hidden until startup complete
-        main_layout.addWidget(self.status_panel)
+        content_layout.addWidget(self.status_panel)
         
-        # Main content area with top-level tabs
-        self.main_tabs = QTabWidget()
-        self.main_tabs.setObjectName("mainTabs")
-        main_layout.addWidget(self.main_tabs, stretch=1)
+        # Main content area stacked widget
+        self.main_stacked = QStackedWidget()
+        self.main_stacked.setObjectName("mainStacked")
+        content_layout.addWidget(self.main_stacked, stretch=1)
         
-        # Tab 1: Workflow & Dependencies (original layout)
+        # Page 1: Workflow & Dependencies
         workflow_tab = QWidget()
         wf_layout = QVBoxLayout(workflow_tab)
         wf_layout.setContentsMargins(0, 0, 0, 0)
@@ -205,19 +218,23 @@ class ManagerWindow(QMainWindow):
         
         content_splitter.addWidget(right_splitter)
         content_splitter.setSizes([280, 450, 450])
-        self.main_tabs.addTab(workflow_tab, "🔧 워크플로우")
+        self.main_stacked.addWidget(workflow_tab)
         
-        # Tab 2: Local Model Browser (NEW)
+        # Page 2: Local Model Browser
         model_browser_tab = self._create_model_browser_tab()
-        self.main_tabs.addTab(model_browser_tab, "📦 로컬 모델")
+        self.main_stacked.addWidget(model_browser_tab)
         
-        # Tab 3: Settings (NEW)
+        # Page 3: Settings
         settings_tab = self._create_settings_tab()
-        self.main_tabs.addTab(settings_tab, "⚙️ 설정")
+        self.main_stacked.addWidget(settings_tab)
         
-        # Action bar
+        # Connect sidebar selection
+        self.sidebar_list.currentRowChanged.connect(self.main_stacked.setCurrentIndex)
+        self.sidebar_list.currentRowChanged.connect(self._on_main_tab_changed)
+        
+        # Action bar (moved inside content layout at bottom)
         action_bar = self._create_action_bar()
-        main_layout.addWidget(action_bar)
+        content_layout.addWidget(action_bar)
         
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -230,6 +247,31 @@ class ManagerWindow(QMainWindow):
         
         QTimer.singleShot(100, self.run_startup_checks)
     
+    def _create_sidebar(self):
+        frame = QFrame()
+        frame.setObjectName("sidebarFrame")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(16, 24, 16, 24)
+        layout.setSpacing(12)
+        
+        # Logo area
+        logo_label = QLabel("DSUComfyCG")
+        logo_label.setObjectName("sidebarLogo")
+        logo_label.setStyleSheet("color: #f8fafc; font-size: 24px; font-weight: bold; margin-bottom: 20px;")
+        layout.addWidget(logo_label)
+        
+        # Navigation List
+        self.sidebar_list = QListWidget()
+        self.sidebar_list.setObjectName("sidebarList")
+        self.sidebar_list.addItem("🔧 Workflows")
+        self.sidebar_list.addItem("📦 Local Models")
+        self.sidebar_list.addItem("⚙️ Settings")
+        
+        self.sidebar_list.setCurrentRow(0)
+        layout.addWidget(self.sidebar_list, stretch=1)
+        
+        return frame
+
     def _create_header(self):
         frame = QFrame()
         frame.setObjectName("headerFrame")
@@ -246,6 +288,31 @@ class ManagerWindow(QMainWindow):
         layout.addWidget(self.version_label)
         
         layout.addStretch()
+        
+        # 1-Click Install All Button
+        self.install_all_btn = QPushButton("⚡ One-Click Install All")
+        self.install_all_btn.setObjectName("installAllBtn")
+        self.install_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #10b981;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #059669;
+            }
+            QPushButton:disabled {
+                background-color: #475569;
+                color: #94a3b8;
+            }
+        """)
+        self.install_all_btn.clicked.connect(self.install_all_missing)
+        self.install_all_btn.hide() # Shown only when dependencies are missing
+        layout.addWidget(self.install_all_btn)
         
         # Update button (hidden by default)
         self.update_btn = QPushButton("🔄 Update Available")
@@ -1126,127 +1193,145 @@ class ManagerWindow(QMainWindow):
     
     def _get_stylesheet(self):
         return """
-            QMainWindow {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1a1b26, stop:1 #24283b);
+            QMainWindow, #mainContentArea {
+                background-color: #0f172a;
+            }
+            #sidebarFrame {
+                background-color: #1e293b;
+                border-right: 1px solid #334155;
             }
             #headerFrame {
-                background: rgba(30, 32, 48, 0.8);
-                border-radius: 16px;
-                padding: 24px;
-                border: 1px solid rgba(115, 218, 202, 0.2);
+                background-color: transparent;
             }
-            #titleLabel { color: #7aa2f7; font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif; }
-            #systemInfo { color: #565f89; font-size: 13px; font-weight: 500; }
+            #titleLabel { color: #f8fafc; font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif; }
+            #systemInfo { color: #94a3b8; font-size: 13px; font-weight: 500; }
+            
+            #sidebarList {
+                background: transparent; border: none; outline: none;
+                color: #94a3b8; font-size: 15px; font-weight: 600;
+            }
+            #sidebarList::item {
+                padding: 12px 16px; border-radius: 8px; margin-bottom: 4px;
+            }
+            #sidebarList::item:selected {
+                background-color: #334155; color: #f8fafc;
+            }
+            #sidebarList::item:hover:!selected {
+                background-color: #1e293b; color: #cbd5e1;
+            }
             
             #startupFrame {
-                background: rgba(122, 162, 247, 0.1);
-                border: 1px solid #7aa2f7;
+                background-color: #1e293b;
+                border: 1px solid #334155;
                 border-radius: 12px;
             }
-            #startupLabel { color: #bb9af7; font-size: 15px; font-weight: 600; }
+            #startupLabel { color: #3b82f6; font-size: 15px; font-weight: 600; }
             #startupProgress {
-                background: #1a1b26; border: none; border-radius: 6px; height: 8px;
+                background: #0f172a; border: none; border-radius: 6px; height: 8px;
             }
             #startupProgress::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7aa2f7, stop:1 #bb9af7);
+                background-color: #3b82f6;
                 border-radius: 6px;
             }
             
             QGroupBox {
-                color: #c0caf5; font-size: 15px; font-weight: 700;
-                border: 1px solid #414868; border-radius: 12px;
+                color: #f8fafc; font-size: 15px; font-weight: 700;
+                border: 1px solid #334155; border-radius: 12px;
                 margin-top: 24px; padding-top: 20px;
-                background: rgba(36, 40, 59, 0.6);
+                background-color: #1e293b;
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 16px; padding: 0 8px; color: #7dcfff;
+                subcontrol-origin: margin; left: 16px; padding: 0 8px; color: #3b82f6;
             }
             
-            #sectionLabel { color: #7dcfff; font-size: 13px; font-weight: 700; }
-            #countLabel { color: #565f89; font-size: 12px; font-weight: 600; }
-            #queueSummary { color: #9aa5ce; font-size: 13px; padding: 12px; }
+            #sectionLabel { color: #3b82f6; font-size: 13px; font-weight: 700; }
+            #countLabel { color: #94a3b8; font-size: 12px; font-weight: 600; }
+            #queueSummary { color: #cbd5e1; font-size: 13px; padding: 12px; }
             
             #queueProgressFrame {
-                background: rgba(187, 154, 247, 0.1);
-                border: 1px solid #414868;
+                background-color: #1e293b;
+                border: 1px solid #334155;
                 border-radius: 10px;
             }
             #queueProgressBar {
-                background: #1a1b26; border: 1px solid #414868;
+                background: #0f172a; border: 1px solid #334155;
                 border-radius: 8px; height: 22px; text-align: center; color: #fff; font-weight: bold;
             }
             #queueProgressBar::chunk {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #bb9af7, stop:1 #f7768e);
+                background-color: #10b981;
                 border-radius: 7px;
             }
             
             QListWidget, QTreeWidget {
-                background: rgba(26, 27, 38, 0.95); color: #c0caf5;
-                border: 1px solid #414868; border-radius: 10px; font-size: 13px; outline: none;
+                background-color: #1e293b; color: #f8fafc;
+                border: 1px solid #334155; border-radius: 8px; font-size: 14px; outline: none;
             }
-            QListWidget::item { padding: 10px 14px; border-radius: 6px; margin: 4px 6px; background: transparent; }
-            QListWidget::item:selected {
-                background: rgba(122, 162, 247, 0.2); 
-                color: #7aa2f7; 
-                border: 1px solid #7aa2f7;
+            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #0f172a; }
+            QTreeWidget::item:selected {
+                background-color: #334155; color: #f8fafc;
             }
-            QListWidget::item:hover {
-                background: rgba(122, 162, 247, 0.1);
+            QTreeWidget::item:hover {
+                background-color: rgba(51, 65, 85, 0.5);
             }
-            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #24283b; }
             QHeaderView::section {
-                background: #24283b; color: #7dcfff; padding: 10px;
+                background-color: #0f172a; color: #94a3b8; padding: 10px;
                 border: none; font-weight: 700; font-size: 12px; text-transform: uppercase;
             }
             
-            #queueList::item { padding: 8px 12px; font-size: 12px; }
+            #queueList { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; }
+            #queueList::item { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #334155; }
             
             QPushButton { 
-                border: none; border-radius: 8px; padding: 10px 18px; 
+                border: none; border-radius: 6px; padding: 8px 16px; 
                 font-size: 13px; font-weight: 700; font-family: 'Segoe UI', sans-serif;
             }
             
             #primaryBtn {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #7aa2f7, stop:1 #3d59a1);
-                color: #ffffff; font-size: 15px; padding: 14px 40px;
-                border: 1px solid #7aa2f7;
+                background-color: #3b82f6; color: #ffffff; font-size: 15px; padding: 14px 40px;
             }
-            #primaryBtn:hover { 
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #89b4fa, stop:1 #587ace);
-                border-color: #bb9af7;
-            }
-            #primaryBtn:pressed { background: #3d59a1; }
-            #primaryBtn:disabled { background: #2f334d; color: #565f89; border: 1px solid #414868; }
+            #primaryBtn:hover { background-color: #2563eb; }
+            #primaryBtn:pressed { background-color: #1d4ed8; }
+            #primaryBtn:disabled { background-color: #334155; color: #94a3b8; }
             
-            #secondaryBtn { background: #24283b; color: #c0caf5; border: 1px solid #414868; }
-            #secondaryBtn:hover { background: #414868; color: #fff; border-color: #565f89; }
+            #secondaryBtn { background-color: #334155; color: #f8fafc; }
+            #secondaryBtn:hover { background-color: #475569; }
             
-            #smallBtn { background: #24283b; color: #9aa5ce; padding: 8px 14px; font-size: 12px; border: 1px solid #414868; }
-            #smallBtn:hover { background: #414868; color: #c0caf5; border-color: #7aa2f7; }
+            #smallBtn { background-color: #334155; color: #cbd5e1; padding: 6px 12px; font-size: 12px; }
+            #smallBtn:hover { background-color: #475569; color: #f8fafc; }
             
             #installBtn { 
-                background: rgba(247, 118, 142, 0.2); color: #f7768e; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(247, 118, 142, 0.5);
+                background: rgba(239, 68, 68, 0.2); color: #ef4444; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.5);
             }
-            #installBtn:hover { background: rgba(247, 118, 142, 0.4); }
+            #installBtn:hover { background: rgba(239, 68, 68, 0.4); }
             
             #downloadBtn { 
-                background: rgba(122, 162, 247, 0.2); color: #7aa2f7; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(122, 162, 247, 0.5);
+                background: rgba(59, 130, 246, 0.2); color: #3b82f6; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.5);
             }
-            #downloadBtn:hover { background: rgba(122, 162, 247, 0.4); }
+            #downloadBtn:hover { background: rgba(59, 130, 246, 0.4); }
             
             #addQueueBtn { 
-                background: rgba(187, 154, 247, 0.2); color: #bb9af7; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(187, 154, 247, 0.5);
+                background: rgba(16, 185, 129, 0.2); color: #10b981; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.5);
             }
-            #addQueueBtn:hover { background: rgba(187, 154, 247, 0.4); }
+            #addQueueBtn:hover { background: rgba(16, 185, 129, 0.4); }
             
             #urlInputBtn { 
-                background: rgba(224, 175, 104, 0.2); color: #e0af68; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(224, 175, 104, 0.5);
+                background: rgba(245, 158, 11, 0.2); color: #f59e0b; 
+                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(245, 158, 11, 0.5);
             }
-            #urlInputBtn:hover { background: rgba(224, 175, 104, 0.4); }
+            #urlInputBtn:hover { background: rgba(245, 158, 11, 0.4); }
+            
+            QLineEdit {
+                background-color: #0f172a;
+                color: #f8fafc;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 10px;
+                font-size: 14px;
+            }
+            QLineEdit:focus { border-color: #3b82f6; outline: none; }
         """
         
     def show_nodes_context_menu(self, position):
@@ -1730,6 +1815,36 @@ class ManagerWindow(QMainWindow):
         url = item.data(Qt.UserRole)
         if url:
             self.source_input.setText(url)
+            
+    def install_all_missing(self):
+        """1-Click Install All functionality for missing nodes and models with URLs."""
+        if not hasattr(self, 'current_workflow') or not self.current_workflow:
+            return
+            
+        deps = check_workflow_dependencies(self.current_workflow)
+        items_added = 0
+        
+        # Add missing nodes with URLs
+        for node in deps["nodes"]:
+            if not node["installed"] and node["folder"] != "Builtin" and node["url"]:
+                # Check if already in queue to avoid duplicates
+                if not any(n["url"] == node["url"] for n in self.queue_nodes):
+                    self.add_node_to_queue(node["url"], node["folder"])
+                    items_added += 1
+                    
+        # Add missing models with URLs
+        for model in deps["models"]:
+            if not model["installed"] and model["url"]:
+                # Check if already in queue
+                if not any(m["name"] == model["name"] for m in self.queue_models):
+                    self.add_model_to_queue(model["name"], model["url"])
+                    items_added += 1
+                    
+        if items_added > 0:
+            QMessageBox.information(self, "1-Click Install", f"{items_added} items added to the download queue.")
+            self.start_queue_download() # Automatically start the queue
+        else:
+            QMessageBox.information(self, "1-Click Install", "No downloadable items found. Some models may need a manual source URL.")
     
     def add_node_to_queue(self, url, name):
         if (url, name) not in self.queue_nodes:
