@@ -1,0 +1,199 @@
+{
+    "nodes": [
+        {
+            "id": 1,
+            "type": "CheckpointLoaderSimple",
+            "pos": [
+                10,
+                10
+            ],
+            "widgets_values": [
+                "sdxl/sd_xl_base_1.0.safetensors"
+            ]
+        },
+        {
+            "id": 2,
+            "type": "LoadImage",
+            "pos": [
+                10,
+                200
+            ],
+            "widgets_values": [
+                "example_outpaint.png",
+                "upload"
+            ]
+        },
+        {
+            "id": 3,
+            "type": "ImagePadForOutpaint",
+            "pos": [
+                300,
+                200
+            ],
+            "widgets_values": [
+                128,
+                128,
+                128,
+                128,
+                "feathering"
+            ]
+        },
+        {
+            "id": 4,
+            "type": "VAEEncodeForInpaint",
+            "pos": [
+                600,
+                200
+            ],
+            "widgets_values": [
+                6
+            ]
+        },
+        {
+            "id": 5,
+            "type": "CLIPTextEncode",
+            "pos": [
+                300,
+                10
+            ],
+            "widgets_values": [
+                "cinematic wide shot, background expansion, seamless transition"
+            ]
+        },
+        {
+            "id": 6,
+            "type": "KSampler",
+            "pos": [
+                900,
+                10
+            ],
+            "widgets_values": [
+                0,
+                "fixed",
+                30,
+                8,
+                "euler",
+                "normal",
+                1
+            ]
+        },
+        {
+            "id": 7,
+            "type": "VAEDecode",
+            "pos": [
+                1200,
+                10
+            ]
+        },
+        {
+            "id": 8,
+            "type": "SaveImage",
+            "pos": [
+                1400,
+                10
+            ],
+            "widgets_values": [
+                "DSU_Outpaint"
+            ]
+        }
+    ],
+    "links": [
+        [
+            1,
+            1,
+            0,
+            6,
+            0,
+            "MODEL"
+        ],
+        [
+            1,
+            1,
+            1,
+            5,
+            0,
+            "CLIP"
+        ],
+        [
+            5,
+            5,
+            0,
+            6,
+            1,
+            "CONDITIONING"
+        ],
+        [
+            2,
+            2,
+            0,
+            3,
+            0,
+            "IMAGE"
+        ],
+        [
+            3,
+            3,
+            0,
+            4,
+            0,
+            "IMAGE"
+        ],
+        [
+            3,
+            3,
+            1,
+            4,
+            1,
+            "MASK"
+        ],
+        [
+            1,
+            1,
+            2,
+            4,
+            2,
+            "VAE"
+        ],
+        [
+            4,
+            4,
+            0,
+            6,
+            3,
+            "LATENT"
+        ],
+        [
+            6,
+            6,
+            0,
+            7,
+            0,
+            "LATENT"
+        ],
+        [
+            1,
+            1,
+            2,
+            7,
+            1,
+            "VAE"
+        ],
+        [
+            7,
+            7,
+            0,
+            8,
+            0,
+            "IMAGE"
+        ]
+    ],
+    "extra": {
+        "ds": {
+            "offset": [
+                100,
+                100
+            ],
+            "scale": 1.0
+        }
+    }
+}

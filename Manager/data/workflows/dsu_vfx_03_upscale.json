@@ -1,0 +1,173 @@
+{
+    "nodes": [
+        {
+            "id": 1,
+            "type": "CheckpointLoaderSimple",
+            "pos": [
+                10,
+                10
+            ],
+            "widgets_values": [
+                "sdxl/sd_xl_base_1.0.safetensors"
+            ]
+        },
+        {
+            "id": 2,
+            "type": "LoadImage",
+            "pos": [
+                10,
+                300
+            ],
+            "widgets_values": [
+                "source_vfx.png",
+                "upload"
+            ]
+        },
+        {
+            "id": 3,
+            "type": "ControlNetLoader",
+            "pos": [
+                10,
+                500
+            ],
+            "widgets_values": [
+                "controlnet/control_tile_sdxl.safetensors"
+            ]
+        },
+        {
+            "id": 4,
+            "type": "ControlNetApplyAdvanced",
+            "pos": [
+                350,
+                400
+            ],
+            "widgets_values": [
+                0.6,
+                0,
+                1
+            ]
+        },
+        {
+            "id": 5,
+            "type": "ImageUpscaleWithModel",
+            "pos": [
+                500,
+                100
+            ]
+        },
+        {
+            "id": 6,
+            "type": "UpscaleModelLoader",
+            "pos": [
+                500,
+                300
+            ],
+            "widgets_values": [
+                "RealESRGAN_x4plus.pth"
+            ]
+        },
+        {
+            "id": 7,
+            "type": "KSampler",
+            "pos": [
+                700,
+                10
+            ],
+            "widgets_values": [
+                0,
+                "fixed",
+                20,
+                7,
+                "euler",
+                "normal",
+                0.35
+            ]
+        },
+        {
+            "id": 8,
+            "type": "VAEDecode",
+            "pos": [
+                900,
+                10
+            ]
+        },
+        {
+            "id": 9,
+            "type": "SaveImage",
+            "pos": [
+                1100,
+                10
+            ],
+            "widgets_values": [
+                "DSU_Upscaled_4K"
+            ]
+        }
+    ],
+    "links": [
+        [
+            1,
+            1,
+            0,
+            7,
+            0,
+            "MODEL"
+        ],
+        [
+            2,
+            2,
+            0,
+            5,
+            0,
+            "IMAGE"
+        ],
+        [
+            3,
+            6,
+            0,
+            5,
+            1,
+            "UPSCALE_MODEL"
+        ],
+        [
+            4,
+            5,
+            0,
+            7,
+            3,
+            "LATENT"
+        ],
+        [
+            5,
+            7,
+            0,
+            8,
+            0,
+            "LATENT"
+        ],
+        [
+            6,
+            1,
+            2,
+            8,
+            1,
+            "VAE"
+        ],
+        [
+            7,
+            8,
+            0,
+            9,
+            0,
+            "IMAGE"
+        ]
+    ],
+    "extra": {
+        "ds": {
+            "offset": [
+                50,
+                50
+            ],
+            "scale": 1.0
+        }
+    }
+}

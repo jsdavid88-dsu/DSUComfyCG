@@ -1,0 +1,92 @@
+{
+    "nodes": [
+        {
+            "id": 1,
+            "type": "LTXVLoader",
+            "pos": [
+                10,
+                10
+            ],
+            "widgets_values": [
+                "ltx-video/ltx-video-2b-v0.9.safetensors"
+            ]
+        },
+        {
+            "id": 2,
+            "type": "LoadImage",
+            "pos": [
+                10,
+                200
+            ],
+            "widgets_values": [
+                "character_portrait.png",
+                "upload"
+            ]
+        },
+        {
+            "id": 3,
+            "type": "LTXVSampler",
+            "pos": [
+                400,
+                10
+            ],
+            "widgets_values": [
+                121,
+                "fixed",
+                25,
+                3,
+                12,
+                512,
+                768
+            ]
+        },
+        {
+            "id": 4,
+            "type": "VideoCombine",
+            "pos": [
+                800,
+                10
+            ],
+            "widgets_values": [
+                24,
+                0,
+                "h264-mp4"
+            ]
+        }
+    ],
+    "links": [
+        [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "MODEL"
+        ],
+        [
+            2,
+            2,
+            0,
+            3,
+            1,
+            "VAE_IN"
+        ],
+        [
+            3,
+            3,
+            0,
+            4,
+            0,
+            "IMAGES"
+        ]
+    ],
+    "extra": {
+        "ds": {
+            "offset": [
+                0,
+                0
+            ],
+            "scale": 1.0
+        }
+    }
+}

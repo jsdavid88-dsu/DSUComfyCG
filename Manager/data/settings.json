@@ -1,0 +1,18 @@
+{
+    "api_keys": {
+        "hf_token": "",
+        "civitai_api_key": "",
+        "tavily_api_key": ""
+    },
+    "download": {
+        "use_aria2": true,
+        "aria2_max_connections": 16,
+        "aria2_split": 16,
+        "parallel_threads": 4
+    },
+    "search": {
+        "fuzzy_threshold": 0.70,
+        "enable_civitai": true,
+        "enable_tavily": true
+    }
+}

@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Core Checker Module (v5 - Fast NODE_DB + Direct Install)
+DSUComfyCG Manager - Core Checker Module (v6 - Enhanced Search + aria2 + Model Browser)
 """
 
 import os
@@ -15,8 +15,19 @@ except ImportError:
     requests = None
 
 import re
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
+# New enhanced modules
+from core.fuzzy_matcher import enhanced_model_search, CONFIDENCE_EXACT
+from core.search_engines import search_civitai, search_tavily, get_api_key, load_settings
+from core.aria2_downloader import smart_download, is_aria2_available
 from importlib.metadata import version, PackageNotFoundError
 try:
     from packaging import specifiers, version as packaging_version
@@ -63,6 +74,7 @@ EXT_MODEL_DB = {}
 EXT_MODEL_DB_CACHE_FILE = os.path.join(CACHE_DIR, "model_list_cache.json")
 
 FOLDER_MAPPINGS = {}
+EXTRA_MODEL_PATHS = {}  # From extra_model_paths.yaml
 
 # Embedded model URLs found in workflows (name -> {url, directory, source})
 EMBEDDED_MODEL_URLS = {}
@@ -70,6 +82,10 @@ EMBEDDED_MODEL_URLS = {}
 # NOT_FOUND cache - models that couldn't be found (avoid re-searching)
 NOT_FOUND_CACHE = set()
 NOT_FOUND_CACHE_FILE = os.path.join(CACHE_DIR, "not_found_cache.json")
+
+# Model usage tracking (model_name -> [workflow_list])
+MODEL_USAGE_CACHE = {}
+MODEL_USAGE_CACHE_FILE = os.path.join(CACHE_DIR, "model_usage_cache.json")
 
 # ... (Built-in nodes skipped for brevity) ...
 
@@ -118,14 +134,23 @@ def fetch_ext_model_db():
 def check_model_in_db(model_name):
     """Check if a model is in our MODEL_DB or External DB. Returns (in_db, info_dict).
     
-    Priority:
+    Enhanced search priority chain (v6):
     0. EMBEDDED_MODEL_URLS (from workflow properties.models) - Most accurate
-    1. Local MODEL_DB (models_db.json) - High priority (we control this)
-    2. External MODEL_DB (model-list.json) - Secondary (thousands of models)
-    3. HuggingFace Search - Last resort
+    1. Local MODEL_DB (models_db.json) - Exact match
+    2. External MODEL_DB (model-list.json) - Exact match
+    3. Fuzzy Match in DB (70% threshold) - NEW
+    4. Alternative Format Names in DB - NEW
+    5. HuggingFace API Search (existing)
+    6. CivitAI API Search - NEW
+    7. Tavily AI Search (optional) - NEW
     """
     logger.info(f"[Model Check] Looking for: {model_name}")
     basename = os.path.basename(model_name.replace("\\", "/"))
+    
+    # Skip NOT_FOUND cache
+    if basename in NOT_FOUND_CACHE:
+        logger.info(f"[Model Check] ✗ In NOT_FOUND cache: {basename}")
+        return False, None
     
     # 0. Check EMBEDDED_MODEL_URLS (from workflow)
     if basename in EMBEDDED_MODEL_URLS:
@@ -135,50 +160,72 @@ def check_model_in_db(model_name):
             "url": info["url"],
             "folder": info["directory"],
             "description": f"Embedded in workflow",
-            "source": "embedded"
+            "source": "embedded",
+            "_confidence": CONFIDENCE_EXACT,
+            "_method": "embedded"
         }
     
-    # 1. Local MODEL_DB Check
+    # 1. Local MODEL_DB Check (exact)
     if model_name in MODEL_DB:
         logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
-        return True, MODEL_DB[model_name]
+        info = dict(MODEL_DB[model_name])
+        info["_confidence"] = CONFIDENCE_EXACT
+        info["_method"] = "exact"
+        return True, info
     
     if basename in MODEL_DB:
         logger.info(f"[Model Check] ✓ Basename match in MODEL_DB: {basename}")
-        return True, MODEL_DB[basename]
+        info = dict(MODEL_DB[basename])
+        info["_confidence"] = CONFIDENCE_EXACT
+        info["_method"] = "exact"
+        return True, info
     
-    for key, info in MODEL_DB.items():
+    for key, val in MODEL_DB.items():
         if basename == os.path.basename(key):
             logger.info(f"[Model Check] ✓ Key basename match in MODEL_DB: {key}")
+            info = dict(val)
+            info["_confidence"] = CONFIDENCE_EXACT
+            info["_method"] = "exact"
             return True, info
             
-    # 2. External MODEL_DB Check (ComfyUI-Manager list)
-    # The external list is a list of dicts, not a dict of keys. We need to search it.
-    # Structure: {"name": "foo.ckpt", "url": "...", "filename": "..."}
+    # 2. External MODEL_DB Check (exact)
     if EXT_MODEL_DB:
         for model in EXT_MODEL_DB:
-            # Check filename match
             if model.get("filename") == basename:
                 logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB: {model['name']}")
                 return True, {
                     "url": model.get("url"),
                     "filename": model.get("filename"),
-                    "folder": model.get("type", "checkpoints"), # Map types if needed
-                    "description": f"{model.get('name')} (External)"
+                    "folder": model.get("type", "checkpoints"),
+                    "description": f"{model.get('name')} (External)",
+                    "_confidence": CONFIDENCE_EXACT,
+                    "_method": "exact"
                 }
-            # Check name match
             if model.get("name") == basename:
                 logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB (by name): {model['name']}")
                 return True, {
                     "url": model.get("url"),
                     "filename": model.get("filename"),
                     "folder": model.get("type", "checkpoints"),
-                    "description": f"{model.get('name')} (External)"
+                    "description": f"{model.get('name')} (External)",
+                    "_confidence": CONFIDENCE_EXACT,
+                    "_method": "exact"
                 }
 
-    logger.info(f"[Model Check] Not in DBs, searching HuggingFace...")
+    # 3-4. Fuzzy Match + Alternative Format Names (NEW)
+    settings = load_settings()
+    fuzzy_threshold = settings.get("search", {}).get("fuzzy_threshold", 0.70)
     
-    # 3. Fallback: Search HuggingFace
+    found, info, confidence, method = enhanced_model_search(
+        model_name, MODEL_DB, EXT_MODEL_DB, fuzzy_threshold
+    )
+    if found:
+        logger.info(f"[Model Check] ✓ Enhanced match ({method}, {confidence*100:.0f}%): {model_name}")
+        return True, info
+
+    logger.info(f"[Model Check] Not in DBs, searching external APIs...")
+    
+    # 5. HuggingFace Search (existing)
     repo_id, filename = search_huggingface(model_name)
     if repo_id and filename:
         logger.info(f"[Model Check] ✓ Found on HuggingFace: {repo_id}/{filename}")
@@ -186,11 +233,69 @@ def check_model_in_db(model_name):
             "repo_id": repo_id,
             "filename": filename,
             "folder": guess_model_folder(basename),
-            "description": f"Auto-found on HuggingFace"
+            "description": f"Auto-found on HuggingFace",
+            "_confidence": 0.85,
+            "_method": "huggingface"
         }
+    
+    # 6. CivitAI Search (NEW)
+    enable_civitai = settings.get("search", {}).get("enable_civitai", True)
+    if enable_civitai:
+        civitai_key = get_api_key("civitai_api_key")
+        url, civitai_info = search_civitai(model_name, civitai_key)
+        if url and civitai_info:
+            civitai_info["folder"] = civitai_info.get("folder", guess_model_folder(basename))
+            civitai_info.setdefault("_confidence", 0.75)
+            civitai_info["_method"] = "civitai"
+            return True, civitai_info
+    
+    # 7. Tavily AI Search (NEW, optional)
+    enable_tavily = settings.get("search", {}).get("enable_tavily", True)
+    if enable_tavily:
+        tavily_key = get_api_key("tavily_api_key")
+        if tavily_key:
+            url, tavily_info = search_tavily(model_name, tavily_key)
+            if url and tavily_info:
+                tavily_info["folder"] = tavily_info.get("folder", guess_model_folder(basename))
+                tavily_info.setdefault("_confidence", 0.60)
+                tavily_info["_method"] = "tavily"
+                return True, tavily_info
+    
+    # Cache as not found
+    NOT_FOUND_CACHE.add(basename)
+    _save_not_found_cache()
     
     logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
     return False, None
+
+
+def _save_not_found_cache():
+    """Persist NOT_FOUND_CACHE to disk."""
+    try:
+        with open(NOT_FOUND_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(list(NOT_FOUND_CACHE), f)
+    except Exception:
+        pass
+
+
+def _load_not_found_cache():
+    """Load NOT_FOUND_CACHE from disk."""
+    global NOT_FOUND_CACHE
+    if os.path.exists(NOT_FOUND_CACHE_FILE):
+        try:
+            with open(NOT_FOUND_CACHE_FILE, 'r', encoding='utf-8') as f:
+                NOT_FOUND_CACHE = set(json.load(f))
+        except Exception:
+            NOT_FOUND_CACHE = set()
+
+
+def clear_not_found_cache():
+    """Clear the NOT_FOUND cache so models are re-searched."""
+    global NOT_FOUND_CACHE
+    NOT_FOUND_CACHE = set()
+    if os.path.exists(NOT_FOUND_CACHE_FILE):
+        os.remove(NOT_FOUND_CACHE_FILE)
+    logger.info("[Cache] NOT_FOUND cache cleared")
 
 
 
@@ -594,7 +699,11 @@ def download_model_parallel(url, target_path, total_size, progress_callback=None
 def download_model(model_name, progress_callback=None):
     """Download a model from HuggingFace or direct URL.
     
-    Uses parallel downloading if file size > 50MB and server supports it.
+    Download priority (v6):
+    1. huggingface_hub (if repo_id available)
+    2. aria2c (if available and URL present) - NEW
+    3. Built-in parallel download (if >50MB)
+    4. Sequential download (fallback)
     """
     # Check if in our DB
     in_db, info = check_model_in_db(model_name)
@@ -603,6 +712,9 @@ def download_model(model_name, progress_callback=None):
     
     folder_key = info.get("folder", "checkpoints")
     folder_path = FOLDER_MAPPINGS.get(folder_key, f"ComfyUI/models/{folder_key}")
+    # Also check EXTRA_MODEL_PATHS
+    if folder_key in EXTRA_MODEL_PATHS:
+        folder_path = EXTRA_MODEL_PATHS[folder_key]
     target_dir = os.path.join(BASE_DIR, folder_path)
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
@@ -621,7 +733,7 @@ def download_model(model_name, progress_callback=None):
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     
     url = info.get("url")
-    # If using huggingface_hub, we use their built-in download (no parallel for now)
+    # If using huggingface_hub, we use their built-in download
     repo_id = info.get("repo_id")
     hf_filename = info.get("filename") or info.get("hf_filename")
     
@@ -641,6 +753,23 @@ def download_model(model_name, progress_callback=None):
 
     if not url:
         return False, "No download URL available"
+    
+    # --- NEW: Try aria2c first ---
+    settings = load_settings()
+    use_aria2 = settings.get("download", {}).get("use_aria2", True)
+    
+    if use_aria2 and is_aria2_available():
+        logger.info(f"Attempting aria2 download for {filename}...")
+        headers = {}
+        hf_token = get_api_key("hf_token")
+        if hf_token and "huggingface.co" in url:
+            headers["Authorization"] = f"Bearer {hf_token}"
+        
+        success, msg = smart_download(url, target_path, progress_callback, headers or None)
+        if success:
+            return True, f"Downloaded {filename} (aria2)"
+        else:
+            logger.warning(f"aria2 failed: {msg}. Falling back to built-in downloader.")
     
     if not requests:
         return False, "requests module not available"
@@ -814,12 +943,25 @@ def check_node_installed(node_type):
 
 
 def check_model_installed(model_name):
-    """Check if a model is installed. Returns (installed, folder/status, download_url)."""
+    """Check if a model is installed. Returns (installed, folder/status, download_url).
+    
+    Now also searches extra_model_paths.yaml directories.
+    """
     # Get basename (without subfolder like Kijai_WAN/)
     basename = os.path.basename(model_name.replace("\\", "/"))
     
-    if os.path.exists(MODELS_PATH):
-        for root, dirs, files in os.walk(MODELS_PATH):
+    # Search all model directories (including extra paths)
+    search_paths = [MODELS_PATH]
+    for extra_path in EXTRA_MODEL_PATHS.values():
+        if os.path.isabs(extra_path):
+            search_paths.append(extra_path)
+        else:
+            search_paths.append(os.path.join(BASE_DIR, extra_path))
+    
+    for search_path in search_paths:
+        if not os.path.exists(search_path):
+            continue
+        for root, dirs, files in os.walk(search_path):
             # Check exact basename match
             if basename in files:
                 return True, "found", None
@@ -828,15 +970,14 @@ def check_model_installed(model_name):
             if model_name in files:
                 return True, "found", None
             
-            # Check partial match (for files that might have slightly different names)
+            # Check case-insensitive match
             for f in files:
                 if f.lower() == basename.lower():
                     return True, "found", None
     
-    # Check if we have info in MODEL_DB (or from HuggingFace search)
+    # Check if we have info in MODEL_DB (or from enhanced search)
     in_db, info = check_model_in_db(model_name)
     if in_db:
-        # Return folder and info dict itself for download
         return False, info.get("folder", "available"), info
     
     return False, "unknown", None
@@ -1504,8 +1645,226 @@ def get_system_health_report():
     return report
 
 
+# =============================================================================
+# extra_model_paths.yaml Support
+# =============================================================================
+
+def load_extra_model_paths():
+    """Load extra model paths from ComfyUI's extra_model_paths.yaml."""
+    global EXTRA_MODEL_PATHS
+    
+    yaml_path = os.path.join(COMFY_PATH, "extra_model_paths.yaml")
+    if not os.path.exists(yaml_path):
+        return
+    
+    if not yaml:
+        logger.debug("PyYAML not installed, cannot load extra_model_paths.yaml")
+        return
+    
+    try:
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f)
+        
+        if not isinstance(data, dict):
+            return
+        
+        for config_name, paths in data.items():
+            if not isinstance(paths, dict):
+                continue
+            base_path = paths.get("base_path", "")
+            for key, path in paths.items():
+                if key in ("base_path", "is_default"):
+                    continue
+                if base_path and not os.path.isabs(path):
+                    full_path = os.path.join(base_path, path)
+                else:
+                    full_path = path
+                
+                if key not in EXTRA_MODEL_PATHS:
+                    EXTRA_MODEL_PATHS[key] = full_path
+                    logger.info(f"[ExtraPath] {key} → {full_path}")
+        
+        logger.info(f"Loaded {len(EXTRA_MODEL_PATHS)} extra model paths")
+    except Exception as e:
+        logger.warning(f"Failed to load extra_model_paths.yaml: {e}")
+
+
+# =============================================================================
+# Batch Workflow Scanning & Model Usage Tracking
+# =============================================================================
+
+def scan_all_workflows_for_models():
+    """Scan ALL workflows to build model usage history.
+    
+    Scans both DSUComfyCG workflows/ and ComfyUI user workflows.
+    
+    Returns:
+        dict: {model_name: [workflow_list]}
+    """
+    global MODEL_USAGE_CACHE
+    usage = {}  # model_name -> [workflow_files]
+    
+    # Directories to scan
+    scan_dirs = [WORKFLOWS_DIR]
+    
+    # ComfyUI user data workflows
+    comfy_user_dir = os.path.join(COMFY_PATH, "user", "default", "workflows")
+    if os.path.exists(comfy_user_dir):
+        scan_dirs.append(comfy_user_dir)
+    
+    # ComfyUI input directory (sometimes has workflows)
+    comfy_input_dir = os.path.join(COMFY_PATH, "input")
+    if os.path.exists(comfy_input_dir):
+        scan_dirs.append(comfy_input_dir)
+    
+    total_workflows = 0
+    
+    for scan_dir in scan_dirs:
+        if not os.path.exists(scan_dir):
+            continue
+        
+        for root, dirs, files in os.walk(scan_dir):
+            for fname in files:
+                if not fname.endswith(".json"):
+                    continue
+                
+                filepath = os.path.join(root, fname)
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    
+                    # Quick check: does it look like a workflow?
+                    if not isinstance(data, dict):
+                        continue
+                    if "nodes" not in data and "last_node_id" not in data:
+                        continue
+                    
+                    total_workflows += 1
+                    rel_path = os.path.relpath(filepath, BASE_DIR)
+                    
+                    # Extract model names from nodes
+                    nodes = data.get("nodes", [])
+                    if not isinstance(nodes, list):
+                        nodes = list(data.values()) if isinstance(data, dict) else []
+                    
+                    for node in nodes:
+                        if not isinstance(node, dict):
+                            continue
+                        widgets = node.get("widgets_values") or []
+                        for val in widgets:
+                            if isinstance(val, str):
+                                lower = val.lower()
+                                if lower.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf')):
+                                    basename = os.path.basename(val.replace("\\", "/"))
+                                    if basename not in usage:
+                                        usage[basename] = []
+                                    if rel_path not in usage[basename]:
+                                        usage[basename].append(rel_path)
+                
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                except Exception:
+                    continue
+    
+    logger.info(f"[Scan] Scanned {total_workflows} workflows, found {len(usage)} unique models")
+    
+    # Save to cache
+    MODEL_USAGE_CACHE = usage
+    try:
+        with open(MODEL_USAGE_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(usage, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Failed to save usage cache: {e}")
+    
+    return usage
+
+
+def load_model_usage_cache():
+    """Load model usage cache from disk."""
+    global MODEL_USAGE_CACHE
+    if os.path.exists(MODEL_USAGE_CACHE_FILE):
+        try:
+            with open(MODEL_USAGE_CACHE_FILE, 'r', encoding='utf-8') as f:
+                MODEL_USAGE_CACHE = json.load(f)
+            return MODEL_USAGE_CACHE
+        except Exception:
+            pass
+    return {}
+
+
+def get_all_installed_models():
+    """Get a list of all installed models with metadata.
+    
+    Returns:
+        list of dicts: [{name, path, folder, size_bytes, modified_time}, ...]
+    """
+    models = []
+    
+    # Search primary models path
+    search_paths = [(MODELS_PATH, "")]
+    
+    # Add extra model paths
+    for key, extra_path in EXTRA_MODEL_PATHS.items():
+        if os.path.isabs(extra_path):
+            search_paths.append((extra_path, f"[{key}] "))
+        else:
+            search_paths.append((os.path.join(BASE_DIR, extra_path), f"[{key}] "))
+    
+    MODEL_EXTENSIONS = {'.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf'}
+    
+    for search_path, prefix in search_paths:
+        if not os.path.exists(search_path):
+            continue
+        
+        for root, dirs, files in os.walk(search_path):
+            folder = os.path.relpath(root, search_path).replace("\\", "/")
+            if folder == ".":
+                folder = os.path.basename(root)
+            
+            for fname in files:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext not in MODEL_EXTENSIONS:
+                    continue
+                
+                full_path = os.path.join(root, fname)
+                try:
+                    stat = os.stat(full_path)
+                    models.append({
+                        "name": fname,
+                        "path": full_path,
+                        "folder": f"{prefix}{folder}",
+                        "size_bytes": stat.st_size,
+                        "modified_time": stat.st_mtime,
+                    })
+                except Exception:
+                    continue
+    
+    return models
+
+
+def get_unused_models():
+    """Get list of installed models not used in any workflow.
+    
+    Requires scan_all_workflows_for_models() or load_model_usage_cache() to have been called.
+    
+    Returns:
+        list of model dicts that are installed but not referenced by any workflow.
+    """
+    usage = MODEL_USAGE_CACHE or load_model_usage_cache()
+    all_models = get_all_installed_models()
+    
+    unused = []
+    for model in all_models:
+        if model["name"] not in usage:
+            unused.append(model)
+    
+    return unused
+
+
 # Initialize NODE_DB and MODEL_DB on module load
 fetch_node_db()
 load_model_db()
 fetch_ext_model_db()
-
+load_extra_model_paths()
+_load_not_found_cache()
+load_model_usage_cache()

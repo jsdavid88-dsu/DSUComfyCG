@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Main Window UI (v7 - With Download Queue)
+DSUComfyCG Manager - Main Window UI (v8 - Local Model Browser + Settings + Confidence)
 """
 
 import sys
@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QTreeWidget, QTreeWidgetItem,
     QLabel, QPushButton, QStatusBar, QMessageBox, QProgressBar,
     QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu,
-    QTabWidget
+    QTabWidget, QLineEdit, QCheckBox, QFormLayout, QComboBox,
+    QFileDialog, QHeaderView
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QAction, QCursor
@@ -26,10 +27,27 @@ from core.checker import (
     check_for_updates, perform_update, get_local_version,
     check_comfyui_version, check_custom_nodes_updates, 
     update_comfyui, update_all_custom_nodes, get_system_health_report,
-    save_url_to_model_db, guess_model_folder
+    save_url_to_model_db, guess_model_folder,
+    get_all_installed_models, get_unused_models,
+    scan_all_workflows_for_models, clear_not_found_cache,
+    MODELS_PATH
 )
+from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily
+from core.aria2_downloader import is_aria2_available
 from ui.url_input_dialog import ModelUrlInputDialog
 from ui.workflow_validator import WorkflowValidatorDialog
+
+class SearchWorker(QThread):
+    finished = Signal(list)
+    
+    def __init__(self, model_name, api_key=None):
+        super().__init__()
+        self.model_name = model_name
+        self.api_key = api_key
+        
+    def run(self):
+        results = advanced_search_tavily(self.model_name, self.api_key)
+        self.finished.emit(results)
 
 
 class StartupWorker(QThread):
@@ -158,23 +176,44 @@ class ManagerWindow(QMainWindow):
         self.status_panel.hide()  # Hidden until startup complete
         main_layout.addWidget(self.status_panel)
         
-        # Main content with 3 columns
-        content_splitter = QSplitter(Qt.Horizontal)
-        main_layout.addWidget(content_splitter, stretch=1)
+        # Main content area with top-level tabs
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        main_layout.addWidget(self.main_tabs, stretch=1)
         
-        # Left: Workflows
+        # Tab 1: Workflow & Dependencies (original layout)
+        workflow_tab = QWidget()
+        wf_layout = QVBoxLayout(workflow_tab)
+        wf_layout.setContentsMargins(0, 0, 0, 0)
+        
+        content_splitter = QSplitter(Qt.Horizontal)
+        wf_layout.addWidget(content_splitter, stretch=1)
+        
         left_panel = self._create_workflow_panel()
         content_splitter.addWidget(left_panel)
         
-        # Center: Dependencies
         center_panel = self._create_dependency_panel()
         content_splitter.addWidget(center_panel)
         
-        # Right: Download Queue
-        right_panel = self._create_queue_panel()
-        content_splitter.addWidget(right_panel)
+        right_splitter = QSplitter(Qt.Vertical)
         
-        content_splitter.setSizes([280, 550, 400])
+        details_panel = self._create_model_details_panel()
+        right_splitter.addWidget(details_panel)
+        
+        queue_panel = self._create_queue_panel()
+        right_splitter.addWidget(queue_panel)
+        
+        content_splitter.addWidget(right_splitter)
+        content_splitter.setSizes([280, 450, 450])
+        self.main_tabs.addTab(workflow_tab, "🔧 워크플로우")
+        
+        # Tab 2: Local Model Browser (NEW)
+        model_browser_tab = self._create_model_browser_tab()
+        self.main_tabs.addTab(model_browser_tab, "📦 로컬 모델")
+        
+        # Tab 3: Settings (NEW)
+        settings_tab = self._create_settings_tab()
+        self.main_tabs.addTab(settings_tab, "⚙️ 설정")
         
         # Action bar
         action_bar = self._create_action_bar()
@@ -518,15 +557,78 @@ class ManagerWindow(QMainWindow):
         layout.addLayout(models_header)
         
         self.models_tree = QTreeWidget()
-        self.models_tree.setHeaderLabels(["File", "Status", ""])
-        self.models_tree.setColumnWidth(0, 200)
-        self.models_tree.setColumnWidth(1, 100)
-        self.models_tree.setColumnWidth(2, 80)
+        self.models_tree.setHeaderLabels(["File", "Status", "Match", ""])
+        self.models_tree.setColumnWidth(0, 180)
+        self.models_tree.setColumnWidth(1, 90)
+        self.models_tree.setColumnWidth(2, 70)
+        self.models_tree.setColumnWidth(3, 80)
         self.models_tree.setRootIsDecorated(False)
         self.models_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.models_tree.customContextMenuRequested.connect(self.show_models_context_menu)
+        self.models_tree.currentItemChanged.connect(self._on_model_selected)
         layout.addWidget(self.models_tree)
         
+        return group
+    
+    def _create_model_details_panel(self):
+        group = QGroupBox("Model Details")
+        layout = QVBoxLayout(group)
+        layout.setSpacing(10)
+        
+        self.details_content = QWidget()
+        details_layout = QVBoxLayout(self.details_content)
+        details_layout.setContentsMargins(0,0,0,0)
+        
+        # Details labels
+        self.detail_name = QLabel("선택된 모델 없음")
+        self.detail_name.setStyleSheet("color: #7dcfff; font-size: 15px; font-weight: bold;")
+        self.detail_status = QLabel("")
+        self.detail_info = QLabel("모델 트리를 클릭하여 상세 정보를 확인하세요.")
+        self.detail_info.setWordWrap(True)
+        self.detail_info.setStyleSheet("color: #888; font-size: 12px;")
+        
+        details_layout.addWidget(self.detail_name)
+        details_layout.addWidget(self.detail_status)
+        details_layout.addWidget(self.detail_info)
+        
+        # Source input row
+        source_layout = QHBoxLayout()
+        self.source_input = QLineEdit()
+        self.source_input.setPlaceholderText("직접 다운로드 URL 입력...")
+        self.source_input.setStyleSheet("background: #1a1b26; border: 1px solid #414868; padding: 6px; border-radius: 4px; color: #c0caf5;")
+        self.save_source_btn = QPushButton("저장")
+        self.save_source_btn.setObjectName("smallBtn")
+        self.save_source_btn.clicked.connect(self._save_manual_source)
+        source_layout.addWidget(self.source_input)
+        source_layout.addWidget(self.save_source_btn)
+        
+        self.source_widget = QWidget()
+        self.source_widget.setLayout(source_layout)
+        self.source_widget.hide()
+        details_layout.addWidget(self.source_widget)
+        
+        # Action row (Advanced Search)
+        actions_layout = QHBoxLayout()
+        self.adv_search_btn = QPushButton("✨ Advanced Search (Tavily)")
+        self.adv_search_btn.setObjectName("smallBtn")
+        self.adv_search_btn.setStyleSheet("background-color: #3b4261; color: #bb9af7;")
+        self.adv_search_btn.clicked.connect(self._run_advanced_search)
+        actions_layout.addWidget(self.adv_search_btn)
+        actions_layout.addStretch()
+        
+        self.actions_widget = QWidget()
+        self.actions_widget.setLayout(actions_layout)
+        self.actions_widget.hide()
+        details_layout.addWidget(self.actions_widget)
+        
+        # Advanced search results area
+        self.search_results_list = QListWidget()
+        self.search_results_list.hide()
+        self.search_results_list.itemDoubleClicked.connect(self._apply_search_result)
+        details_layout.addWidget(self.search_results_list)
+        
+        details_layout.addStretch()
+        layout.addWidget(self.details_content)
         return group
     
     def _create_queue_panel(self):
@@ -584,6 +686,418 @@ class ManagerWindow(QMainWindow):
         layout.addLayout(btn_layout)
         
         return group
+    
+    def _create_model_browser_tab(self):
+        """Create the Local Model Browser tab (NEW)."""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        # Left: Folder tree
+        left_panel = QVBoxLayout()
+        folder_label = QLabel("📁 모델 폴더")
+        folder_label.setStyleSheet("color: #7dcfff; font-size: 14px; font-weight: bold;")
+        left_panel.addWidget(folder_label)
+        
+        self.folder_tree = QTreeWidget()
+        self.folder_tree.setHeaderLabels(["Folder", "Count"])
+        self.folder_tree.setColumnWidth(0, 180)
+        self.folder_tree.setColumnWidth(1, 50)
+        self.folder_tree.setMaximumWidth(280)
+        self.folder_tree.currentItemChanged.connect(self._on_folder_selected)
+        left_panel.addWidget(self.folder_tree)
+        
+        # Scan button
+        scan_usage_btn = QPushButton("🔍 워크플로우 스캔")
+        scan_usage_btn.setObjectName("smallBtn")
+        scan_usage_btn.setToolTip("모든 워크플로우를 스캔하여 모델 사용 이력을 업데이트합니다")
+        scan_usage_btn.clicked.connect(self._scan_model_usage)
+        left_panel.addWidget(scan_usage_btn)
+        
+        layout.addLayout(left_panel)
+        
+        # Right: Model list
+        right_panel = QVBoxLayout()
+        
+        # Search and filter bar
+        filter_layout = QHBoxLayout()
+        
+        self.model_search = QLineEdit()
+        self.model_search.setPlaceholderText("🔍 모델 검색...")
+        self.model_search.setStyleSheet("""
+            QLineEdit {
+                background: rgba(26, 27, 38, 0.95); color: #c0caf5;
+                border: 1px solid #414868; border-radius: 8px;
+                padding: 8px 12px; font-size: 13px;
+            }
+            QLineEdit:focus { border-color: #7aa2f7; }
+        """)
+        self.model_search.textChanged.connect(self._filter_model_list)
+        filter_layout.addWidget(self.model_search)
+        
+        self.unused_filter = QCheckBox("미사용만")
+        self.unused_filter.setStyleSheet("color: #f7768e; font-size: 12px;")
+        self.unused_filter.setToolTip("워크플로우에서 사용되지 않는 모델만 표시")
+        self.unused_filter.toggled.connect(self._filter_model_list)
+        filter_layout.addWidget(self.unused_filter)
+        
+        right_panel.addLayout(filter_layout)
+        
+        # Model count
+        self.browser_count_label = QLabel("")
+        self.browser_count_label.setStyleSheet("color: #565f89; font-size: 11px;")
+        right_panel.addWidget(self.browser_count_label)
+        
+        # Model list tree
+        self.model_browser_tree = QTreeWidget()
+        self.model_browser_tree.setHeaderLabels(["Name", "Folder", "Size", "Modified"])
+        self.model_browser_tree.setColumnWidth(0, 300)
+        self.model_browser_tree.setColumnWidth(1, 120)
+        self.model_browser_tree.setColumnWidth(2, 80)
+        self.model_browser_tree.setColumnWidth(3, 130)
+        self.model_browser_tree.setRootIsDecorated(False)
+        self.model_browser_tree.setSortingEnabled(True)
+        self.model_browser_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.model_browser_tree.customContextMenuRequested.connect(self._show_browser_context_menu)
+        right_panel.addWidget(self.model_browser_tree)
+        
+        layout.addLayout(right_panel, stretch=1)
+        
+        # Store all models for filtering
+        self._all_browser_models = []
+        self._unused_model_names = set()
+        
+        return widget
+    
+    def _create_settings_tab(self):
+        """Create the Settings tab (NEW)."""
+        widget = QWidget()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        inner = QWidget()
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(30, 20, 30, 20)
+        layout.setSpacing(20)
+        
+        title = QLabel("⚙️ 설정")
+        title.setStyleSheet("color: #7dcfff; font-size: 18px; font-weight: bold;")
+        layout.addWidget(title)
+        
+        # --- API Keys Section ---
+        api_group = QGroupBox("API Keys")
+        api_layout = QFormLayout(api_group)
+        api_layout.setSpacing(12)
+        
+        input_style = """
+            QLineEdit {
+                background: rgba(26, 27, 38, 0.95); color: #c0caf5;
+                border: 1px solid #414868; border-radius: 6px;
+                padding: 8px 12px; font-size: 12px; font-family: 'Consolas', monospace;
+            }
+            QLineEdit:focus { border-color: #7aa2f7; }
+        """
+        
+        self.hf_token_input = QLineEdit()
+        self.hf_token_input.setPlaceholderText("hf_...")
+        self.hf_token_input.setEchoMode(QLineEdit.Password)
+        self.hf_token_input.setStyleSheet(input_style)
+        api_layout.addRow(QLabel("HuggingFace Token:"), self.hf_token_input)
+        
+        self.civitai_key_input = QLineEdit()
+        self.civitai_key_input.setPlaceholderText("선택사항 - rate limit 해제용")
+        self.civitai_key_input.setEchoMode(QLineEdit.Password)
+        self.civitai_key_input.setStyleSheet(input_style)
+        api_layout.addRow(QLabel("CivitAI API Key:"), self.civitai_key_input)
+        
+        self.tavily_key_input = QLineEdit()
+        self.tavily_key_input.setPlaceholderText("선택사항 - AI 검색용")
+        self.tavily_key_input.setEchoMode(QLineEdit.Password)
+        self.tavily_key_input.setStyleSheet(input_style)
+        api_layout.addRow(QLabel("Tavily API Key:"), self.tavily_key_input)
+        
+        layout.addWidget(api_group)
+        
+        # --- Search Settings ---
+        search_group = QGroupBox("검색 설정")
+        search_layout = QFormLayout(search_group)
+        search_layout.setSpacing(12)
+        
+        self.enable_civitai_cb = QCheckBox("CivitAI 검색 활성화")
+        self.enable_civitai_cb.setStyleSheet("color: #c0caf5;")
+        search_layout.addRow(self.enable_civitai_cb)
+        
+        self.enable_tavily_cb = QCheckBox("Tavily AI 검색 활성화 (API 키 필요)")
+        self.enable_tavily_cb.setStyleSheet("color: #c0caf5;")
+        search_layout.addRow(self.enable_tavily_cb)
+        
+        layout.addWidget(search_group)
+        
+        # --- Download Settings ---
+        dl_group = QGroupBox("다운로드 설정")
+        dl_layout = QFormLayout(dl_group)
+        dl_layout.setSpacing(12)
+        
+        self.use_aria2_cb = QCheckBox("aria2c 사용 (설치 시 자동 감지)")
+        self.use_aria2_cb.setStyleSheet("color: #c0caf5;")
+        dl_layout.addRow(self.use_aria2_cb)
+        
+        aria2_status = "✅ 설치됨" if is_aria2_available() else "❌ 미설치"
+        aria2_label = QLabel(f"aria2c 상태: {aria2_status}")
+        aria2_label.setStyleSheet("color: #888; font-size: 11px;")
+        dl_layout.addRow(aria2_label)
+        
+        layout.addWidget(dl_group)
+        
+        # --- Cache Actions ---
+        cache_group = QGroupBox("캐시 관리")
+        cache_layout = QVBoxLayout(cache_group)
+        
+        clear_cache_btn = QPushButton("🗑️ NOT_FOUND 캐시 초기화")
+        clear_cache_btn.setObjectName("smallBtn")
+        clear_cache_btn.setToolTip("못찾은 모델 캐시를 초기화하여 다시 검색합니다")
+        clear_cache_btn.clicked.connect(self._clear_not_found_cache)
+        cache_layout.addWidget(clear_cache_btn)
+        
+        layout.addWidget(cache_group)
+        
+        # Save button
+        save_btn = QPushButton("💾 설정 저장")
+        save_btn.setObjectName("primaryBtn")
+        save_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #10b981, stop:1 #059669);
+                border: 1px solid #10b981; font-size: 14px; padding: 12px;
+            }
+            QPushButton:hover { background: #34d399; }
+        """)
+        save_btn.clicked.connect(self._save_settings)
+        layout.addWidget(save_btn)
+        
+        layout.addStretch()
+        
+        scroll.setWidget(inner)
+        
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+        
+        # Load current settings
+        self._load_settings_to_ui()
+        
+        return widget
+    
+    def _load_settings_to_ui(self):
+        """Load settings from file into UI controls."""
+        settings = load_settings()
+        api_keys = settings.get("api_keys", {})
+        self.hf_token_input.setText(api_keys.get("hf_token", ""))
+        self.civitai_key_input.setText(api_keys.get("civitai_api_key", ""))
+        self.tavily_key_input.setText(api_keys.get("tavily_api_key", ""))
+        
+        search = settings.get("search", {})
+        self.enable_civitai_cb.setChecked(search.get("enable_civitai", True))
+        self.enable_tavily_cb.setChecked(search.get("enable_tavily", True))
+        
+        dl = settings.get("download", {})
+        self.use_aria2_cb.setChecked(dl.get("use_aria2", True))
+    
+    def _save_settings(self):
+        """Save UI settings to file."""
+        settings = load_settings()
+        settings["api_keys"] = {
+            "hf_token": self.hf_token_input.text().strip(),
+            "civitai_api_key": self.civitai_key_input.text().strip(),
+            "tavily_api_key": self.tavily_key_input.text().strip(),
+        }
+        settings["search"] = {
+            "enable_civitai": self.enable_civitai_cb.isChecked(),
+            "enable_tavily": self.enable_tavily_cb.isChecked(),
+            "fuzzy_threshold": settings.get("search", {}).get("fuzzy_threshold", 0.70),
+        }
+        settings["download"] = {
+            "use_aria2": self.use_aria2_cb.isChecked(),
+            "aria2_max_connections": 16,
+            "aria2_split": 16,
+            "parallel_threads": 4,
+        }
+        if save_settings(settings):
+            QMessageBox.information(self, "저장 완료", "설정이 저장되었습니다.")
+        else:
+            QMessageBox.warning(self, "저장 실패", "설정 저장에 실패했습니다.")
+    
+    def _clear_not_found_cache(self):
+        """Clear the NOT_FOUND cache."""
+        clear_not_found_cache()
+        QMessageBox.information(self, "캐시 초기화", "NOT_FOUND 캐시가 초기화되었습니다.\n다음 검색 시 모든 모델을 다시 찾습니다.")
+    
+    def _on_main_tab_changed(self, index):
+        """Handle main tab change. Lazy-load model browser on first visit."""
+        if index == 1 and not self._all_browser_models:
+            self._refresh_model_browser()
+    
+    def _refresh_model_browser(self):
+        """Refresh the local model browser."""
+        self.status_bar.showMessage("로컬 모델 스캔 중...")
+        QApplication.processEvents()
+        
+        self._all_browser_models = get_all_installed_models()
+        
+        # Build folder tree
+        self.folder_tree.clear()
+        folder_counts = {}
+        for m in self._all_browser_models:
+            folder = m["folder"].split("/")[0] if "/" in m["folder"] else m["folder"]
+            folder_counts[folder] = folder_counts.get(folder, 0) + 1
+        
+        all_item = QTreeWidgetItem(["전체", str(len(self._all_browser_models))])
+        all_item.setData(0, Qt.UserRole, "__all__")
+        self.folder_tree.addTopLevelItem(all_item)
+        
+        for folder, count in sorted(folder_counts.items()):
+            item = QTreeWidgetItem([folder, str(count)])
+            item.setData(0, Qt.UserRole, folder)
+            self.folder_tree.addTopLevelItem(item)
+        
+        self.folder_tree.setCurrentItem(all_item)
+        self._filter_model_list()
+        self.status_bar.showMessage(f"로컬 모델: {len(self._all_browser_models)}개")
+    
+    def _on_folder_selected(self, current, previous):
+        """Handle folder selection in browser."""
+        self._filter_model_list()
+    
+    def _filter_model_list(self):
+        """Filter and display model list based on search/folder/unused filters."""
+        if not self._all_browser_models:
+            return
+        
+        search_text = self.model_search.text().lower().strip() if hasattr(self, 'model_search') else ""
+        show_unused_only = self.unused_filter.isChecked() if hasattr(self, 'unused_filter') else False
+        
+        # Get selected folder
+        selected_folder = "__all__"
+        if hasattr(self, 'folder_tree') and self.folder_tree.currentItem():
+            selected_folder = self.folder_tree.currentItem().data(0, Qt.UserRole) or "__all__"
+        
+        self.model_browser_tree.clear()
+        shown = 0
+        
+        from datetime import datetime
+        
+        for m in self._all_browser_models:
+            # Folder filter
+            if selected_folder != "__all__":
+                folder_base = m["folder"].split("/")[0] if "/" in m["folder"] else m["folder"]
+                if folder_base != selected_folder:
+                    continue
+            
+            # Search filter
+            if search_text and search_text not in m["name"].lower():
+                continue
+            
+            # Unused filter
+            if show_unused_only and m["name"] not in self._unused_model_names:
+                continue
+            
+            # Format size
+            size_mb = m["size_bytes"] / (1024 * 1024)
+            if size_mb > 1024:
+                size_str = f"{size_mb / 1024:.1f} GB"
+            else:
+                size_str = f"{size_mb:.0f} MB"
+            
+            # Format time
+            try:
+                mod_time = datetime.fromtimestamp(m["modified_time"]).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                mod_time = ""
+            
+            item = QTreeWidgetItem([m["name"], m["folder"], size_str, mod_time])
+            item.setData(0, Qt.UserRole, m)  # Store full model data
+            
+            # Color unused models red
+            if m["name"] in self._unused_model_names:
+                item.setForeground(0, QColor("#f7768e"))
+            
+            self.model_browser_tree.addTopLevelItem(item)
+            shown += 1
+        
+        self.browser_count_label.setText(f"{shown} / {len(self._all_browser_models)} 모델")
+    
+    def _scan_model_usage(self):
+        """Scan all workflows for model usage and refresh unused tracking."""
+        self.status_bar.showMessage("워크플로우 전체 스캔 중...")
+        QApplication.processEvents()
+        
+        usage = scan_all_workflows_for_models()
+        
+        # Build unused set
+        unused = get_unused_models()
+        self._unused_model_names = {m["name"] for m in unused}
+        
+        self._refresh_model_browser()
+        
+        msg = f"스캔 완료: {len(usage)}개 모델 사용 이력, {len(self._unused_model_names)}개 미사용"
+        self.status_bar.showMessage(msg)
+        QMessageBox.information(self, "스캔 완료", msg)
+    
+    def _show_browser_context_menu(self, position):
+        """Context menu for model browser."""
+        item = self.model_browser_tree.itemAt(position)
+        if not item:
+            return
+        
+        model_data = item.data(0, Qt.UserRole)
+        if not model_data:
+            return
+        
+        menu = QMenu(self.model_browser_tree)
+        menu.setStyleSheet("""
+            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
+            QMenu::item { padding: 5px 20px; }
+            QMenu::item:selected { background-color: #5865f2; color: white; }
+        """)
+        
+        copy_name = QAction("이름 복사", self)
+        copy_name.triggered.connect(lambda: QApplication.clipboard().setText(model_data["name"]))
+        menu.addAction(copy_name)
+        
+        copy_path = QAction("경로 복사", self)
+        copy_path.triggered.connect(lambda: QApplication.clipboard().setText(model_data["path"]))
+        menu.addAction(copy_path)
+        
+        open_folder = QAction("폴더 열기", self)
+        open_folder.triggered.connect(lambda: os.startfile(os.path.dirname(model_data["path"])))
+        menu.addAction(open_folder)
+        
+        menu.addSeparator()
+        
+        delete_action = QAction("🗑️ 삭제", self)
+        delete_action.triggered.connect(lambda: self._delete_model(model_data))
+        menu.addAction(delete_action)
+        
+        menu.exec(self.model_browser_tree.viewport().mapToGlobal(position))
+    
+    def _delete_model(self, model_data):
+        """Delete a model file."""
+        confirm = QMessageBox.question(
+            self, "모델 삭제",
+            f"'{model_data['name']}'을 삭제하시겠습니까?\n\n"
+            f"경로: {model_data['path']}\n"
+            f"크기: {model_data['size_bytes'] / (1024*1024):.0f} MB\n\n"
+            "이 작업은 되돌릴 수 없습니다.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm == QMessageBox.Yes:
+            try:
+                os.remove(model_data["path"])
+                self._refresh_model_browser()
+                self.status_bar.showMessage(f"삭제됨: {model_data['name']}")
+            except Exception as e:
+                QMessageBox.critical(self, "삭제 실패", str(e))
     
     def _create_action_bar(self):
         frame = QFrame()
@@ -795,6 +1309,9 @@ class ManagerWindow(QMainWindow):
         
         # Check for updates
         self.check_version_updates()
+        
+        # Connect tab change to lazy-load model browser
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
         
         # Populate queue with missing items
         self.queue_nodes = results["missing_nodes"]
@@ -1018,34 +1535,201 @@ class ManagerWindow(QMainWindow):
             name = model["name"]
             item.setText(0, name if len(name) < 30 else name[:27] + "...")
             item.setToolTip(0, name)
+            item.setData(0, Qt.UserRole, model)  # Store full model dict for details panel
+            
+            # Confidence badge (column 2)
+            confidence = 0.0
+            method = ""
+            if isinstance(model.get("url"), dict):
+                confidence = model["url"].get("_confidence", 0.0)
+                method = model["url"].get("_method", "")
+            elif isinstance(model.get("info"), dict):
+                confidence = model["info"].get("_confidence", 0.0)
+                method = model["info"].get("_method", "")
             
             if model["installed"]:
                 item.setText(1, "설치됨")
                 item.setForeground(1, QColor("#00ffcc"))
+                item.setText(2, "✓")
+                item.setForeground(2, QColor("#00ffcc"))
                 found += 1
             elif model["url"]:
+                if confidence >= 0.90:
+                    badge = f"✓ {confidence*100:.0f}%"
+                    badge_color = "#00ffcc"
+                elif confidence >= 0.70:
+                    badge = f"~ {confidence*100:.0f}%"
+                    badge_color = "#ffd93d"
+                elif confidence > 0:
+                    badge = f"? {confidence*100:.0f}%"
+                    badge_color = "#ff9e64"
+                else:
+                    badge = "DB"
+                    badge_color = "#7aa2f7"
+                
                 item.setText(1, "다운로드 대기")
                 item.setForeground(1, QColor("#7aa2f7"))
+                item.setText(2, badge)
+                item.setForeground(2, QColor(badge_color))
+                if method:
+                    item.setToolTip(2, f"Match: {method}")
+                
                 btn = QPushButton("다운로드")
                 btn.setObjectName("downloadBtn")
                 btn.setFixedSize(60, 24)
                 btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
-                self.models_tree.setItemWidget(item, 2, btn)
+                self.models_tree.setItemWidget(item, 3, btn)
                 missing_m += 1
             else:
                 item.setText(1, "Unknown")
                 item.setForeground(1, QColor("#ffd93d"))
+                item.setText(2, "—")
+                item.setForeground(2, QColor("#565f89"))
                 # Add button to input URL manually
                 btn = QPushButton("URL입력")
                 btn.setObjectName("urlInputBtn")
                 btn.setFixedSize(60, 24)
                 btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
-                self.models_tree.setItemWidget(item, 2, btn)
+                self.models_tree.setItemWidget(item, 3, btn)
                 missing_m += 1
             
             self.models_tree.addTopLevelItem(item)
         
         self.models_count.setText(f"OK: {found} / Missing: {missing_m}")
+
+    def _on_model_selected(self, current, previous):
+        """Update Model Details panel when a model is selected."""
+        if not current:
+            self.detail_name.setText("선택된 모델 없음")
+            self.detail_status.setText("")
+            self.detail_info.setText("모델 트리를 클릭하여 상세 정보를 확인하세요.")
+            self.source_widget.hide()
+            self.actions_widget.hide()
+            self.search_results_list.hide()
+            return
+            
+        model = current.data(0, Qt.UserRole)
+        if not model:
+            return
+            
+        self.detail_name.setText(model["name"])
+        
+        info_lines = []
+        info_lines.append(f"<b>대상 폴더:</b> {model['folder']}")
+        
+        confidence = 0.0
+        method = ""
+        url = None
+        
+        if isinstance(model.get("url"), dict):
+            url_info = model["url"]
+            url = url_info.get("url")
+            confidence = url_info.get("_confidence", 0.0)
+            method = url_info.get("_method", "")
+            if "description" in url_info:
+                info_lines.append(f"<b>설명:</b> {url_info['description']}")
+            info_lines.append(f"<b>소스 URL:</b> <a href='{url}'>{url}</a>")
+            info_lines.append(f"<b>매치 신뢰도:</b> {confidence*100:.0f}% ({method})")
+            
+            # Show cached badge if loaded from cache
+            if url_info.get("source") in ["usage_cache", "model_metadata"]:
+                info_lines.append("<i>(캐시된 로컬 데이터 활용됨)</i>")
+                
+        elif isinstance(model.get("info"), dict):
+            url_info = model["info"]
+            confidence = url_info.get("_confidence", 0.0)
+            method = url_info.get("_method", "")
+            if "description" in url_info:
+                info_lines.append(f"<b>설명:</b> {url_info['description']}")
+            info_lines.append(f"<b>출처:</b> {method}")
+            
+        if model["installed"]:
+            self.detail_status.setText("<span style='color:#00ffcc;'>✓ 시스템에 설치됨</span>")
+            self.source_widget.hide()
+            self.actions_widget.hide()
+        elif url:
+            self.detail_status.setText("<span style='color:#7aa2f7;'>⏳ 다운로드 대기 중</span>")
+            self.source_widget.hide()
+            self.actions_widget.hide()
+        else:
+            self.detail_status.setText("<span style='color:#ffd93d;'>❓ 소스 알 수 없음</span>")
+            self.source_input.clear()
+            self.source_widget.show()
+            self.actions_widget.show()
+            
+        self.detail_info.setText("<br>".join(info_lines))
+        self.search_results_list.hide()
+        
+    def _save_manual_source(self):
+        """Save manually entered URL for the selected unknown model."""
+        url = self.source_input.text().strip()
+        if not url:
+            return
+            
+        current = self.models_tree.currentItem()
+        if not current:
+            return
+            
+        model = current.data(0, Qt.UserRole)
+        model_name = model["name"]
+        folder = guess_model_folder(model_name)
+        
+        success, msg = save_url_to_model_db(model_name, url, folder)
+        if success:
+            self.status_bar.showMessage(f"직접 저장됨: {model_name}")
+            self.add_model_to_queue({"name": model_name}, url)
+            # Refresh dependencies to hide input box
+            wf_item = self.workflow_list.currentItem()
+            if wf_item:
+                self.check_dependencies(wf_item.data(Qt.UserRole))
+        else:
+            QMessageBox.warning(self, "저장 실패", msg)
+            
+    def _run_advanced_search(self):
+        """Run Tavily advanced search in background."""
+        current = self.models_tree.currentItem()
+        if not current:
+            return
+            
+        model = current.data(0, Qt.UserRole)
+        api_key = get_api_key("tavily_api_key")
+        if not api_key:
+            QMessageBox.information(self, "API Key 필요", "고급 검색을 사용하려면 설정 탭에서 Tavily API 키를 입력해주세요.")
+            self.main_tabs.setCurrentIndex(2)
+            return
+            
+        self.adv_search_btn.setText("검색 중...")
+        self.adv_search_btn.setEnabled(False)
+        self.search_results_list.clear()
+        
+        self._search_worker = SearchWorker(model["name"], api_key)
+        self._search_worker.finished.connect(self._on_search_finished)
+        self._search_worker.start()
+        
+    def _on_search_finished(self, results):
+        self.adv_search_btn.setText("✨ Advanced Search (Tavily)")
+        self.adv_search_btn.setEnabled(True)
+        
+        self.search_results_list.clear()
+        if not results:
+            self.search_results_list.addItem("검색 결과가 없습니다.")
+            self.search_results_list.show()
+            return
+            
+        for res in results:
+            title = res.get("title", "No Title")
+            url = res.get("url", "")
+            item = QListWidgetItem(f"{title}\n🔗 {url}")
+            item.setData(Qt.UserRole, url)
+            self.search_results_list.addItem(item)
+            
+        self.search_results_list.show()
+        
+    def _apply_search_result(self, item):
+        """When a search result is double clicked, use its URL."""
+        url = item.data(Qt.UserRole)
+        if url:
+            self.source_input.setText(url)
     
     def add_node_to_queue(self, url, name):
         if (url, name) not in self.queue_nodes:
