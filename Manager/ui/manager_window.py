@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QGroupBox, QFrame, QApplication, QDialog, QScrollArea, QMenu,
     QStackedWidget, QSpacerItem, QSizePolicy, QTabWidget,
     QLineEdit, QCheckBox, QFormLayout, QComboBox,
-    QFileDialog, QHeaderView
+    QFileDialog, QHeaderView, QTableWidget, QTableWidgetItem, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QThread, Signal, QTimer
 from PySide6.QtGui import QColor, QFont, QAction, QCursor
@@ -162,79 +162,52 @@ class ManagerWindow(QMainWindow):
         
         central = QWidget()
         self.setCentralWidget(central)
-        main_layout = QHBoxLayout(central)
+        main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # 1. Sidebar
-        self.sidebar_widget = self._create_sidebar()
-        main_layout.addWidget(self.sidebar_widget)
-        
-        # 2. Main Content Area
-        content_widget = QWidget()
-        content_widget.setObjectName("mainContentArea")
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(24, 24, 24, 24)
-        content_layout.setSpacing(20)
-        main_layout.addWidget(content_widget, stretch=1)
-        
         header = self._create_header()
-        content_layout.addWidget(header)
+        main_layout.addWidget(header)
         
         self.startup_frame = self._create_startup_frame()
-        content_layout.addWidget(self.startup_frame)
+        main_layout.addWidget(self.startup_frame)
         
         # System Status Panel (shown after startup)
         self.status_panel = self._create_system_status_panel()
         self.status_panel.hide()  # Hidden until startup complete
-        content_layout.addWidget(self.status_panel)
+        main_layout.addWidget(self.status_panel)
         
-        # Main content area stacked widget
-        self.main_stacked = QStackedWidget()
-        self.main_stacked.setObjectName("mainStacked")
-        content_layout.addWidget(self.main_stacked, stretch=1)
+        # Main content area tabs
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setObjectName("mainTabs")
+        main_layout.addWidget(self.main_tabs, stretch=1)
         
-        # Page 1: Workflow & Dependencies
-        workflow_tab = QWidget()
-        wf_layout = QVBoxLayout(workflow_tab)
-        wf_layout.setContentsMargins(0, 0, 0, 0)
+        # Page 1: Workflow Models
+        workflow_tab = self._create_workflow_models_tab()
+        self.main_tabs.addTab(workflow_tab, "Workflow Models")
         
-        content_splitter = QSplitter(Qt.Horizontal)
-        wf_layout.addWidget(content_splitter, stretch=1)
+        # Page 2: Downloads Placeholder (Will implement later if needed, or point to queue)
+        downloads_tab = QWidget()
+        self.main_tabs.addTab(downloads_tab, "Downloads")
         
-        left_panel = self._create_workflow_panel()
-        content_splitter.addWidget(left_panel)
-        
-        center_panel = self._create_dependency_panel()
-        content_splitter.addWidget(center_panel)
-        
-        right_splitter = QSplitter(Qt.Vertical)
-        
-        details_panel = self._create_model_details_panel()
-        right_splitter.addWidget(details_panel)
-        
-        queue_panel = self._create_queue_panel()
-        right_splitter.addWidget(queue_panel)
-        
-        content_splitter.addWidget(right_splitter)
-        content_splitter.setSizes([280, 450, 450])
-        self.main_stacked.addWidget(workflow_tab)
-        
-        # Page 2: Local Model Browser
+        # Page 3: Local Model Browser
         model_browser_tab = self._create_model_browser_tab()
-        self.main_stacked.addWidget(model_browser_tab)
+        self.main_tabs.addTab(model_browser_tab, "Local Browser")
         
-        # Page 3: Settings
+        # Page 4: Workflows
+        workflows_tab = QWidget()
+        self.main_tabs.addTab(workflows_tab, "Workflows")
+        
+        # Page 5: Settings
         settings_tab = self._create_settings_tab()
-        self.main_stacked.addWidget(settings_tab)
+        self.main_tabs.addTab(settings_tab, "Help/Settings")
         
-        # Connect sidebar selection
-        self.sidebar_list.currentRowChanged.connect(self.main_stacked.setCurrentIndex)
-        self.sidebar_list.currentRowChanged.connect(self._on_main_tab_changed)
+        # Connect tab selection
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
         
-        # Action bar (moved inside content layout at bottom)
+        # Action bar
         action_bar = self._create_action_bar()
-        content_layout.addWidget(action_bar)
+        main_layout.addWidget(action_bar)
         
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -246,31 +219,6 @@ class ManagerWindow(QMainWindow):
         self.is_ready = False
         
         QTimer.singleShot(100, self.run_startup_checks)
-    
-    def _create_sidebar(self):
-        frame = QFrame()
-        frame.setObjectName("sidebarFrame")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(16, 24, 16, 24)
-        layout.setSpacing(12)
-        
-        # Logo area
-        logo_label = QLabel("DSUComfyCG")
-        logo_label.setObjectName("sidebarLogo")
-        logo_label.setStyleSheet("color: #f8fafc; font-size: 24px; font-weight: bold; margin-bottom: 20px;")
-        layout.addWidget(logo_label)
-        
-        # Navigation List
-        self.sidebar_list = QListWidget()
-        self.sidebar_list.setObjectName("sidebarList")
-        self.sidebar_list.addItem("🔧 Workflows")
-        self.sidebar_list.addItem("📦 Local Models")
-        self.sidebar_list.addItem("⚙️ Settings")
-        
-        self.sidebar_list.setCurrentRow(0)
-        layout.addWidget(self.sidebar_list, stretch=1)
-        
-        return frame
 
     def _create_header(self):
         frame = QFrame()
@@ -443,316 +391,118 @@ class ManagerWindow(QMainWindow):
         
         return frame
     
-    def _create_workflow_panel(self):
-        group = QGroupBox("Workflows")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
+    def _create_workflow_models_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(20)
         
-        # Tabs for Custom vs Standard
-        self.wf_tabs = QTabWidget()
+        # 1. Top Controls (Filter combo box)
+        controls_layout = QHBoxLayout()
+        self.model_filter_combo = QComboBox()
+        self.model_filter_combo.addItems(["All Models", "Missing Only", "Existing Only"])
+        self.model_filter_combo.setFixedWidth(150)
+        # We can implement filter logic later
+        controls_layout.addWidget(self.model_filter_combo)
+        controls_layout.addStretch()
+        layout.addLayout(controls_layout)
         
-        # 1. Custom Workflows Tab
-        custom_tab = QWidget()
-        custom_layout = QVBoxLayout(custom_tab)
-        custom_layout.setContentsMargins(0, 5, 0, 0)
+        # 2. Summary Banner
+        banner_frame = QFrame()
+        banner_frame.setStyleSheet("background-color: #333333; border: 1px solid #444444; border-radius: 8px;")
+        banner_layout = QHBoxLayout(banner_frame)
+        banner_layout.setContentsMargins(20, 15, 20, 15)
+        banner_layout.setSpacing(40)
         
-        self.workflow_list = QListWidget()
-        self.workflow_list.currentItemChanged.connect(self.on_workflow_selected)
-        custom_layout.addWidget(self.workflow_list)
-        
-        # Custom Sync/Refresh
-        btn_layout = QHBoxLayout()
-        sync_btn = QPushButton("Sync")
-        sync_btn.setObjectName("smallBtn")
-        sync_btn.clicked.connect(self.sync_workflows_ui)
-        btn_layout.addWidget(sync_btn)
-        
-        validate_btn = QPushButton("Validate")
-        validate_btn.setObjectName("smallBtn")
-        validate_btn.setToolTip("선택한 워크플로우의 의존성을 검증합니다")
-        validate_btn.clicked.connect(self.validate_current_workflow)
-        btn_layout.addWidget(validate_btn)
-        
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setObjectName("smallBtn")
-        refresh_btn.clicked.connect(self.refresh_workflows)
-        btn_layout.addWidget(refresh_btn)
-        custom_layout.addLayout(btn_layout)
-        
-        self.wf_tabs.addTab(custom_tab, "My Workflows")
-        
-        # 2. Standard Packs Tab
-        pack_tab = QWidget()
-        pack_layout = QVBoxLayout(pack_tab)
-        pack_layout.setContentsMargins(0, 5, 0, 0)
-        
-        self.pack_list = QListWidget()
-        self.pack_list.setAlternatingRowColors(True)
-        # self.pack_list.itemClicked.connect(self.on_pack_selected) # Not needed yet
-        pack_layout.addWidget(self.pack_list)
-        
-        # Pack Install Button
-        pack_btn_layout = QHBoxLayout()
-        install_pack_btn = QPushButton("Install Selected Pack")
-        install_pack_btn.setObjectName("primaryBtn")
-        install_pack_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #10b981, stop:1 #059669);
-                border: 1px solid #10b981;
-                font-size: 13px; padding: 10px;
-            }
-            QPushButton:hover { background: #34d399; }
-        """)
-        install_pack_btn.clicked.connect(self.install_standard_pack)
-        pack_btn_layout.addWidget(install_pack_btn)
-        pack_layout.addLayout(pack_btn_layout)
-        
-        self.wf_tabs.addTab(pack_tab, "DSU Standard")
-        
-        layout.addWidget(self.wf_tabs)
-        
-        # Load standard packs
-        self.load_standard_packs()
-        
-        return group
-
-    def load_standard_packs(self):
-        """Load DSU Standard Packs from manifest."""
-        manifest_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "standard_pack_manifest.json")
-        if not os.path.exists(manifest_path):
-            return
-
-        try:
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            self.pack_list.clear()
-            for wf in data.get("workflows", []):
-                item = QListWidgetItem()
-                item.setText(f"[{wf['category']}] {wf['name']}")
-                item.setToolTip(wf['description'])
-                item.setData(Qt.UserRole, wf)  # Store full wf data
-                self.pack_list.addItem(item)
-                
-        except Exception as e:
-            print(f"Error loading pack manifest: {e}")
-
-    def install_standard_pack(self):
-        """Install selected standard pack."""
-        item = self.pack_list.currentItem()
-        if not item:
-            QMessageBox.warning(self, "선택 필요", "설치할 팩을 선택해주세요.")
-            return
+        def _make_stat(title, color):
+            vbox = QVBoxLayout()
+            vbox.setSpacing(2)
+            num_label = QLabel("0")
+            num_label.setStyleSheet(f"color: {color}; font-size: 28px; font-weight: bold; border: none; background: transparent;")
+            num_label.setAlignment(Qt.AlignCenter)
+            title_label = QLabel(title)
+            title_label.setStyleSheet("color: #a0a0a0; font-size: 11px; font-weight: bold; border: none; background: transparent;")
+            title_label.setAlignment(Qt.AlignCenter)
+            vbox.addWidget(num_label)
+            vbox.addWidget(title_label)
+            return vbox, num_label
             
-        wf_data = item.data(Qt.UserRole)
-        confirm = QMessageBox.question(
-            self, "설치 확인",
-            f"'{wf_data['name']}' 패키지를 설치하시겠습니까?\n\n"
-            f"설명: {wf_data['description']}\n"
-            "설치 후 자동으로 의존성 검사를 시작합니다.",
-            QMessageBox.Yes | QMessageBox.No
-        )
+        stat1, self.stat_total = _make_stat("TOTAL MODELS", "#ffffff")
+        stat2, self.stat_existing = _make_stat("EXISTING", "#10b981")
+        stat3, self.stat_missing = _make_stat("MISSING", "#ef4444")
+        stat4, self.stat_downloadable = _make_stat("DOWNLOADABLE", "#10b981")
         
-        if confirm != QMessageBox.Yes:
-            return
-            
-        # Copy source json to workflows folder
-        src_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "workflows", wf_data['file'])
-        target_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "ComfyUI", "user", "default", "workflows")
-        os.makedirs(target_dir, exist_ok=True)
+        banner_layout.addLayout(stat1)
+        banner_layout.addLayout(stat2)
+        banner_layout.addLayout(stat3)
+        banner_layout.addLayout(stat4)
+        banner_layout.addStretch()
         
-        target_file = os.path.join(target_dir, wf_data['file'])
+        layout.addWidget(banner_frame)
         
-        try:
-            if not os.path.exists(src_file):
-                 QMessageBox.critical(self, "오류", f"소스 파일을 찾을 수 없습니다:\n{src_file}")
-                 return
-                 
-            shutil.copy2(src_file, target_file)
-            
-            # Switch to 'My Workflows' and select the new file
-            self.refresh_workflows()
-            self.wf_tabs.setCurrentIndex(0)
-            
-            # Find and select the item
-            items = self.workflow_list.findItems(wf_data['file'], Qt.MatchContains)
-            if items:
-                self.workflow_list.setCurrentItem(items[0])
-                # Trigger validation automatically
-                self.validate_current_workflow()
-                
-            QMessageBox.information(self, "성공", f"'{wf_data['name']}' 설치가 완료되었습니다.")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "설치 실패", f"오류 발생: {str(e)}")
-    
-    def _create_dependency_panel(self):
-        group = QGroupBox("Dependencies")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(12)
+        # 3. Table View
+        self.models_table = QTableWidget()
+        self.models_table.setColumnCount(6)
+        self.models_table.setHorizontalHeaderLabels(["Filename", "Type", "Directory", "Status", "Source", "Action"])
+        self.models_table.horizontalHeader().setStretchLastSection(False)
+        self.models_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.models_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.models_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.models_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.models_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.models_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
         
-        # Nodes section
-        nodes_header = QHBoxLayout()
-        nodes_label = QLabel("Custom Nodes")
-        nodes_label.setObjectName("sectionLabel")
-        nodes_header.addWidget(nodes_label)
-        nodes_header.addStretch()
-        self.nodes_count = QLabel("")
-        self.nodes_count.setObjectName("countLabel")
-        nodes_header.addWidget(self.nodes_count)
-        layout.addLayout(nodes_header)
+        self.models_table.verticalHeader().setVisible(False)
+        self.models_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.models_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.models_table.setShowGrid(False)
         
-        self.nodes_tree = QTreeWidget()
-        self.nodes_tree.setHeaderLabels(["Package", "Status", ""])
-        self.nodes_tree.setColumnWidth(0, 200)
-        self.nodes_tree.setColumnWidth(1, 100)
-        self.nodes_tree.setColumnWidth(2, 80)
-        self.nodes_tree.setRootIsDecorated(False)
-        self.nodes_tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.nodes_tree.customContextMenuRequested.connect(self.show_nodes_context_menu)
-        layout.addWidget(self.nodes_tree)
+        layout.addWidget(self.models_table, stretch=1)
         
-        # Models section
-        models_header = QHBoxLayout()
-        models_label = QLabel("Models")
-        models_label.setObjectName("sectionLabel")
-        models_header.addWidget(models_label)
-        models_header.addStretch()
-        self.models_count = QLabel("")
-        self.models_count.setObjectName("countLabel")
-        models_header.addWidget(self.models_count)
-        layout.addLayout(models_header)
+        # 4. Bottom Panel (Totals + Download Progress)
+        bottom_layout = QHBoxLayout()
         
-        self.models_tree = QTreeWidget()
-        self.models_tree.setHeaderLabels(["File", "Status", "Match", ""])
-        self.models_tree.setColumnWidth(0, 180)
-        self.models_tree.setColumnWidth(1, 90)
-        self.models_tree.setColumnWidth(2, 70)
-        self.models_tree.setColumnWidth(3, 80)
-        self.models_tree.setRootIsDecorated(False)
-        self.models_tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.models_tree.customContextMenuRequested.connect(self.show_models_context_menu)
-        self.models_tree.currentItemChanged.connect(self._on_model_selected)
-        layout.addWidget(self.models_tree)
+        self.table_footer = QLabel("Total: 0 | Existing: 0 | Missing: 0")
+        self.table_footer.setStyleSheet("color: #a0a0a0; font-size: 12px; font-weight: bold;")
+        bottom_layout.addWidget(self.table_footer)
         
-        return group
-    
-    def _create_model_details_panel(self):
-        group = QGroupBox("Model Details")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
+        bottom_layout.addStretch()
         
-        self.details_content = QWidget()
-        details_layout = QVBoxLayout(self.details_content)
-        details_layout.setContentsMargins(0,0,0,0)
-        
-        # Details labels
-        self.detail_name = QLabel("선택된 모델 없음")
-        self.detail_name.setStyleSheet("color: #7dcfff; font-size: 15px; font-weight: bold;")
-        self.detail_status = QLabel("")
-        self.detail_info = QLabel("모델 트리를 클릭하여 상세 정보를 확인하세요.")
-        self.detail_info.setWordWrap(True)
-        self.detail_info.setStyleSheet("color: #888; font-size: 12px;")
-        
-        details_layout.addWidget(self.detail_name)
-        details_layout.addWidget(self.detail_status)
-        details_layout.addWidget(self.detail_info)
-        
-        # Source input row
-        source_layout = QHBoxLayout()
-        self.source_input = QLineEdit()
-        self.source_input.setPlaceholderText("직접 다운로드 URL 입력...")
-        self.source_input.setStyleSheet("background: #1a1b26; border: 1px solid #414868; padding: 6px; border-radius: 4px; color: #c0caf5;")
-        self.save_source_btn = QPushButton("저장")
-        self.save_source_btn.setObjectName("smallBtn")
-        self.save_source_btn.clicked.connect(self._save_manual_source)
-        source_layout.addWidget(self.source_input)
-        source_layout.addWidget(self.save_source_btn)
-        
-        self.source_widget = QWidget()
-        self.source_widget.setLayout(source_layout)
-        self.source_widget.hide()
-        details_layout.addWidget(self.source_widget)
-        
-        # Action row (Advanced Search)
-        actions_layout = QHBoxLayout()
-        self.adv_search_btn = QPushButton("✨ Advanced Search (Tavily)")
-        self.adv_search_btn.setObjectName("smallBtn")
-        self.adv_search_btn.setStyleSheet("background-color: #3b4261; color: #bb9af7;")
-        self.adv_search_btn.clicked.connect(self._run_advanced_search)
-        actions_layout.addWidget(self.adv_search_btn)
-        actions_layout.addStretch()
-        
-        self.actions_widget = QWidget()
-        self.actions_widget.setLayout(actions_layout)
-        self.actions_widget.hide()
-        details_layout.addWidget(self.actions_widget)
-        
-        # Advanced search results area
-        self.search_results_list = QListWidget()
-        self.search_results_list.hide()
-        self.search_results_list.itemDoubleClicked.connect(self._apply_search_result)
-        details_layout.addWidget(self.search_results_list)
-        
-        details_layout.addStretch()
-        layout.addWidget(self.details_content)
-        return group
-    
-    def _create_queue_panel(self):
-        group = QGroupBox("Download Queue")
-        layout = QVBoxLayout(group)
-        layout.setSpacing(10)
-        
-        # Summary
-        self.queue_summary = QLabel("Scanning...")
-        self.queue_summary.setObjectName("queueSummary")
-        self.queue_summary.setWordWrap(True)
-        layout.addWidget(self.queue_summary)
-        
-        # Progress section
+        # Inline progress section styled for the dark theme
         self.queue_progress_frame = QFrame()
-        self.queue_progress_frame.setObjectName("queueProgressFrame")
-        progress_layout = QVBoxLayout(self.queue_progress_frame)
-        progress_layout.setContentsMargins(10, 10, 10, 10)
+        self.queue_progress_frame.setFixedWidth(400)
+        self.queue_progress_frame.setStyleSheet("background-color: transparent; border: none;")
+        progress_layout = QHBoxLayout(self.queue_progress_frame)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
         
         self.queue_current_label = QLabel("Ready")
-        self.queue_current_label.setStyleSheet("color: #00ffcc; font-size: 12px;")
+        self.queue_current_label.setStyleSheet("color: #10b981; font-size: 11px; font-weight: bold;")
+        self.queue_current_label.setFixedWidth(120)
         progress_layout.addWidget(self.queue_current_label)
         
         self.queue_progress_bar = QProgressBar()
         self.queue_progress_bar.setRange(0, 100)
         self.queue_progress_bar.setValue(0)
-        self.queue_progress_bar.setObjectName("queueProgressBar")
+        self.queue_progress_bar.setFixedHeight(14)
+        self.queue_progress_bar.setTextVisible(False)
+        self.queue_progress_bar.setStyleSheet("""
+            QProgressBar { background: #222222; border: 1px solid #444444; border-radius: 4px; }
+            QProgressBar::chunk { background-color: #10b981; border-radius: 3px; }
+        """)
         progress_layout.addWidget(self.queue_progress_bar)
         
         self.queue_detail_label = QLabel("")
-        self.queue_detail_label.setStyleSheet("color: #888; font-size: 11px;")
+        self.queue_detail_label.setStyleSheet("color: #888; font-size: 10px;")
         progress_layout.addWidget(self.queue_detail_label)
         
-        layout.addWidget(self.queue_progress_frame)
+        bottom_layout.addWidget(self.queue_progress_frame)
+        self.queue_progress_frame.hide()  # Hidden until download starts
         
-        # Queue list
-        self.queue_list = QListWidget()
-        self.queue_list.setObjectName("queueList")
-        layout.addWidget(self.queue_list)
+        layout.addLayout(bottom_layout)
         
-        # Queue buttons
-        btn_layout = QHBoxLayout()
-        
-        self.start_queue_btn = QPushButton("Start Download")
-        self.start_queue_btn.setObjectName("primaryBtn")
-        self.start_queue_btn.clicked.connect(self.start_queue_download)
-        self.start_queue_btn.setEnabled(False)
-        btn_layout.addWidget(self.start_queue_btn)
-        
-        self.clear_queue_btn = QPushButton("Clear")
-        self.clear_queue_btn.setObjectName("smallBtn")
-        self.clear_queue_btn.clicked.connect(self.clear_queue)
-        btn_layout.addWidget(self.clear_queue_btn)
-        
-        layout.addLayout(btn_layout)
-        
-        return group
+        return tab
+    
+
     
     def _create_model_browser_tab(self):
         """Create the Local Model Browser tab (NEW)."""
@@ -1194,151 +944,140 @@ class ManagerWindow(QMainWindow):
     def _get_stylesheet(self):
         return """
             QMainWindow {
-                background-color: #0f172a;
+                background-color: #2b2b2b;
             }
             QWidget {
-                color: #f8fafc;
+                color: #e0e0e0;
+                font-family: 'Segoe UI', Arial, sans-serif;
             }
             #mainContentArea, QScrollArea, QScrollArea > QWidget > QWidget {
-                background-color: #0f172a;
+                background-color: #2b2b2b;
                 border: none;
             }
-            #sidebarFrame {
-                background-color: #1e293b;
-                border-right: 1px solid #334155;
+            /* Flat Tab Styling */
+            QTabWidget::pane {
+                border-top: 1px solid #444444;
+                background-color: #2b2b2b;
             }
-            #headerFrame {
-                background-color: transparent;
+            QTabBar::tab {
+                background-color: #2b2b2b;
+                color: #a0a0a0;
+                padding: 12px 24px;
+                border: none;
+                font-size: 14px;
+                font-weight: 600;
             }
-            #titleLabel { color: #f8fafc; font-size: 28px; font-weight: 800; font-family: 'Segoe UI', sans-serif; }
-            #systemInfo { color: #94a3b8; font-size: 13px; font-weight: 500; }
+            QTabBar::tab:hover {
+                color: #ffffff;
+            }
+            QTabBar::tab:selected {
+                color: #10b981;
+                border-bottom: 2px solid #10b981;
+            }
             
-            #sidebarList {
-                background: transparent; border: none; outline: none;
-                color: #94a3b8; font-size: 15px; font-weight: 600;
+            #headerFrame {
+                background-color: #2b2b2b;
+                border-bottom: 1px solid #444444;
             }
-            #sidebarList::item {
-                padding: 12px 16px; border-radius: 8px; margin-bottom: 4px;
-            }
-            #sidebarList::item:selected {
-                background-color: #334155; color: #f8fafc;
-            }
-            #sidebarList::item:hover:!selected {
-                background-color: #1e293b; color: #cbd5e1;
-            }
+            #titleLabel { color: #ffffff; font-size: 24px; font-weight: bold; }
+            #systemInfo { color: #a0a0a0; font-size: 13px; font-weight: 500; }
             
             #startupFrame {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 12px;
+                background-color: #333333;
+                border: 1px solid #444444;
+                border-radius: 8px;
             }
-            #startupLabel { color: #3b82f6; font-size: 15px; font-weight: 600; }
+            #startupLabel { color: #10b981; font-size: 15px; font-weight: bold; }
             #startupProgress {
-                background: #0f172a; border: none; border-radius: 6px; height: 8px;
+                background: #222222; border: none; border-radius: 4px; height: 6px;
             }
             #startupProgress::chunk {
-                background-color: #3b82f6;
-                border-radius: 6px;
+                background-color: #10b981;
+                border-radius: 4px;
             }
             
             QGroupBox {
-                color: #f8fafc; font-size: 15px; font-weight: 700;
-                border: 1px solid #334155; border-radius: 12px;
-                margin-top: 24px; padding-top: 20px;
-                background-color: #1e293b;
+                color: #ffffff; font-size: 14px; font-weight: bold;
+                border: 1px solid #444444; border-radius: 8px;
+                margin-top: 20px; padding-top: 20px;
+                background-color: #333333;
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 16px; padding: 0 8px; color: #3b82f6;
+                subcontrol-origin: margin; left: 16px; padding: 0 4px; color: #10b981;
             }
-            
-            #sectionLabel { color: #3b82f6; font-size: 13px; font-weight: 700; }
-            #countLabel { color: #94a3b8; font-size: 12px; font-weight: 600; }
-            #queueSummary { color: #cbd5e1; font-size: 13px; padding: 12px; }
-            
-            #queueProgressFrame {
-                background-color: #1e293b;
-                border: 1px solid #334155;
-                border-radius: 10px;
+            /* QTableWidget Styling for Easy Install Look */
+            QTableWidget {
+                background-color: #333333;
+                color: #e0e0e0;
+                border: 1px solid #444444;
+                border-radius: 6px;
+                gridline-color: #444444;
+                font-size: 13px;
+                outline: none;
             }
-            #queueProgressBar {
-                background: #0f172a; border: 1px solid #334155;
-                border-radius: 8px; height: 22px; text-align: center; color: #fff; font-weight: bold;
+            QTableWidget::item {
+                padding: 8px 12px;
+                border-bottom: 1px solid #444444;
             }
-            #queueProgressBar::chunk {
-                background-color: #10b981;
-                border-radius: 7px;
+            QTableWidget::item:selected {
+                background-color: #444444;
+                color: #ffffff;
+            }
+            QHeaderView::section {
+                background-color: #222222;
+                color: #a0a0a0;
+                padding: 12px;
+                border: none;
+                font-weight: bold;
+                font-size: 12px;
+                text-align: left;
             }
             
             QListWidget, QTreeWidget {
-                background-color: #1e293b; color: #f8fafc;
-                border: 1px solid #334155; border-radius: 8px; font-size: 14px; outline: none;
+                background-color: #333333; color: #e0e0e0;
+                border: 1px solid #444444; border-radius: 6px; font-size: 13px; outline: none;
             }
-            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #0f172a; }
+            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #444444; }
             QTreeWidget::item:selected {
-                background-color: #334155; color: #f8fafc;
+                background-color: #444444; color: #ffffff;
             }
-            QTreeWidget::item:hover {
-                background-color: rgba(51, 65, 85, 0.5);
-            }
-            QHeaderView::section {
-                background-color: #0f172a; color: #94a3b8; padding: 10px;
-                border: none; font-weight: 700; font-size: 12px; text-transform: uppercase;
-            }
-            
-            #queueList { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; }
-            #queueList::item { padding: 10px 14px; font-size: 13px; border-bottom: 1px solid #334155; }
             
             QPushButton { 
-                border: none; border-radius: 6px; padding: 8px 16px; 
-                font-size: 13px; font-weight: 700; font-family: 'Segoe UI', sans-serif;
+                border: none; border-radius: 6px; padding: 6px 16px; 
+                font-size: 13px; font-weight: bold;
             }
             
             #primaryBtn {
-                background-color: #3b82f6; color: #ffffff; font-size: 15px; padding: 14px 40px;
+                background-color: #eab308; color: #1a1a1a; font-size: 14px; padding: 10px 24px;
             }
-            #primaryBtn:hover { background-color: #2563eb; }
-            #primaryBtn:pressed { background-color: #1d4ed8; }
-            #primaryBtn:disabled { background-color: #334155; color: #94a3b8; }
+            #primaryBtn:hover { background-color: #facc15; }
+            #primaryBtn:pressed { background-color: #ca8a04; }
+            #primaryBtn:disabled { background-color: #444444; color: #888888; }
             
-            #secondaryBtn { background-color: #334155; color: #f8fafc; }
-            #secondaryBtn:hover { background-color: #475569; }
+            #secondaryBtn { background-color: #444444; color: #e0e0e0; }
+            #secondaryBtn:hover { background-color: #555555; }
             
-            #smallBtn { background-color: #334155; color: #cbd5e1; padding: 6px 12px; font-size: 12px; }
-            #smallBtn:hover { background-color: #475569; color: #f8fafc; }
+            #smallBtn { background-color: #444444; color: #d0d0d0; padding: 6px 12px; font-size: 12px; }
+            #smallBtn:hover { background-color: #555555; color: #ffffff; }
             
-            #installBtn { 
-                background: rgba(239, 68, 68, 0.2); color: #ef4444; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.5);
+            /* Yellow Action Table Button */
+            #tableActionBtn {
+                background-color: #eab308; color: #1a1a1a; border-radius: 4px; padding: 6px 12px; 
+                font-weight: bold; font-size: 12px;
             }
-            #installBtn:hover { background: rgba(239, 68, 68, 0.4); }
+            #tableActionBtn:hover { background-color: #facc15; }
+            #tableActionBtn:pressed { background-color: #ca8a04; }
             
-            #downloadBtn { 
-                background: rgba(59, 130, 246, 0.2); color: #3b82f6; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(59, 130, 246, 0.5);
-            }
-            #downloadBtn:hover { background: rgba(59, 130, 246, 0.4); }
-            
-            #addQueueBtn { 
-                background: rgba(16, 185, 129, 0.2); color: #10b981; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.5);
-            }
-            #addQueueBtn:hover { background: rgba(16, 185, 129, 0.4); }
-            
-            #urlInputBtn { 
-                background: rgba(245, 158, 11, 0.2); color: #f59e0b; 
-                padding: 6px 12px; font-size: 12px; border-radius: 6px; border: 1px solid rgba(245, 158, 11, 0.5);
-            }
-            #urlInputBtn:hover { background: rgba(245, 158, 11, 0.4); }
-            
-            QLineEdit {
-                background-color: #0f172a;
-                color: #f8fafc;
-                border: 1px solid #334155;
+            QLineEdit, QComboBox {
+                background-color: #222222;
+                color: #ffffff;
+                border: 1px solid #444444;
                 border-radius: 6px;
-                padding: 10px;
-                font-size: 14px;
+                padding: 8px 12px;
+                font-size: 13px;
             }
-            QLineEdit:focus { border-color: #3b82f6; outline: none; }
+            QLineEdit:focus, QComboBox:focus { border-color: #eab308; outline: none; }
+            QComboBox::drop-down { border: none; }
         """
         
     def show_nodes_context_menu(self, position):
@@ -1405,28 +1144,22 @@ class ManagerWindow(QMainWindow):
         # Connect tab change to lazy-load model browser
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
         
-        # Populate queue with missing items
-        self.queue_nodes = results["missing_nodes"]
-        self.queue_models = results["missing_models"]
-        self.update_queue_display()
+        # Populate all models in the Tabular interface!
+        self.populate_all_models_table()
         
-        n_nodes = len(self.queue_nodes)
-        n_models = len(self.queue_models)
+        n_nodes = len(results["missing_nodes"])
+        n_models = len(results["missing_models"])
         
         if n_nodes > 0 or n_models > 0:
-            self.queue_summary.setText(
-                f"Found missing dependencies:\n"
-                f"• {n_nodes} custom node(s)\n"
-                f"• {n_models} model(s)\n\n"
-                f"Click 'Start Download' to install all."
-            )
-            self.start_queue_btn.setEnabled(True)
+            self.install_all_btn.show()
+            self.install_all_btn.setText(f"⚡ 1-Click Install All ({n_nodes} nodes, {n_models} models)")
         else:
-            self.queue_summary.setText("All dependencies installed! ✓")
+            self.install_all_btn.hide()
         
         self.status_bar.showMessage(
             f"Ready! Nodes: {results['node_db_count']} | Models: {results['model_db_count']} | Workflows: {results['total_workflows']}"
         )
+
     
     def check_version_updates(self):
         """Check for app updates and update UI."""
@@ -1486,18 +1219,8 @@ class ManagerWindow(QMainWindow):
                 self.update_btn.setText("🔄 Update Available")
     
     def update_queue_display(self):
-        self.queue_list.clear()
-        
-        for url, name in self.queue_nodes:
-            item = QListWidgetItem(f"📦 {name}")
-            item.setData(Qt.UserRole, ("node", url, name))
-            self.queue_list.addItem(item)
-        
-        for name, url in self.queue_models:
-            display = name if len(name) < 35 else name[:32] + "..."
-            item = QListWidgetItem(f"📥 {display}")
-            item.setData(Qt.UserRole, ("model", name, url))
-            self.queue_list.addItem(item)
+        # Deprecated: No longer using a separate QListWidget for the queue
+        pass
     
     def refresh_workflows(self):
         self.workflow_list.clear()
@@ -1542,39 +1265,91 @@ class ManagerWindow(QMainWindow):
         self.status_bar.showMessage("Rescanning all workflows...")
         QApplication.processEvents()
         
-        workflows = scan_workflows()
-        all_missing_nodes = {}
-        all_missing_models = {}
+        # Populate the tabular view with ALL known models from the global database
+        # For this tabular view, we want to show everything.
+        self.populate_all_models_table()
         
-        for wf in workflows:
-            deps = check_workflow_dependencies(wf)
-            for node in deps["nodes"]:
-                if not node["installed"] and node["folder"] != "Builtin" and node["url"]:
-                    if node["url"] not in all_missing_nodes:
-                        all_missing_nodes[node["url"]] = node["folder"]
-            for model in deps["models"]:
-                if not model["installed"] and model["url"]:
-                    if model["name"] not in all_missing_models:
-                        all_missing_models[model["name"]] = model["url"]
+        self.status_bar.showMessage(f"Scan complete. Populated models list.")
+
+    def populate_all_models_table(self):
+        self.models_table.setRowCount(0)
         
-        self.queue_nodes = list(all_missing_nodes.items())
-        self.queue_models = list(all_missing_models.items())
-        self.update_queue_display()
+        total = len(MODEL_DB)
+        existing = 0
+        missing = 0
+        downloadable = 0
         
-        n_nodes = len(self.queue_nodes)
-        n_models = len(self.queue_models)
-        
-        if n_nodes > 0 or n_models > 0:
-            self.queue_summary.setText(
-                f"Found missing dependencies:\n• {n_nodes} node(s)\n• {n_models} model(s)"
-            )
-            self.start_queue_btn.setEnabled(True)
-        else:
-            self.queue_summary.setText("All dependencies installed! ✓")
-            self.start_queue_btn.setEnabled(False)
-        
-        self.status_bar.showMessage(f"Scan complete: {n_nodes} nodes, {n_models} models missing")
-    
+        for i, (name, url) in enumerate(MODEL_DB.items()):
+            folder = guess_model_folder(name)
+            self.models_table.insertRow(i)
+            
+            # Simple check if exists
+            model_path = os.path.join(MODELS_PATH, folder, name)
+            is_installed = os.path.exists(model_path)
+            
+            # Column 0: Filename
+            item_name = QTableWidgetItem(name)
+            self.models_table.setItem(i, 0, item_name)
+            
+            # Column 1: Type
+            item_type = QTableWidgetItem(folder)
+            self.models_table.setItem(i, 1, item_type)
+            
+            # Column 2: Directory
+            item_dir = QTableWidgetItem(f"models/{folder}/")
+            self.models_table.setItem(i, 2, item_dir)
+            
+            # Column 3: Status
+            if is_installed:
+                existing += 1
+                status_text = "EXISTS"
+                status_color = QColor("#10b981")
+            else:
+                missing += 1
+                status_text = "MISSING"
+                status_color = QColor("#ef4444")
+            
+            item_status = QTableWidgetItem(status_text)
+            item_status.setForeground(status_color)
+            font = item_status.font()
+            font.setBold(True)
+            item_status.setFont(font)
+            self.models_table.setItem(i, 3, item_status)
+            
+            # Column 4: Source
+            source_text = url if url else "Unknown"
+            item_source = QTableWidgetItem(source_text)
+            if url:
+                item_source.setForeground(QColor("#3b82f6"))
+            self.models_table.setItem(i, 4, item_source)
+            
+            # Column 5: Action Button
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(4, 4, 4, 4)
+            btn = QPushButton("Download" if not is_installed else "Re-download")
+            btn.setObjectName("tableActionBtn")
+            btn.setCursor(Qt.PointingHandCursor)
+            
+            if url:
+                if not is_installed: downloadable += 1
+                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
+            else:
+                btn.setText("Manual URL")
+                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
+                
+            action_layout.addWidget(btn)
+            self.models_table.setCellWidget(i, 5, action_widget)
+            
+            item_name.setToolTip(name)
+            item_source.setToolTip(source_text)
+
+        self.stat_total.setText(str(total))
+        self.stat_existing.setText(str(existing))
+        self.stat_missing.setText(str(missing))
+        self.stat_downloadable.setText(str(downloadable))
+        self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
+
     def on_workflow_selected(self, current, previous):
         if not current:
             return
@@ -1583,111 +1358,92 @@ class ManagerWindow(QMainWindow):
     
     def check_dependencies(self, filename):
         deps = check_workflow_dependencies(filename)
+        self.models_table.setRowCount(0)
         
-        # Nodes
-        self.nodes_tree.clear()
-        installed_count = missing_count = 0
+        total = len(deps["models"])
+        existing = 0
+        missing = 0
+        downloadable = 0
         
-        for node in deps["nodes"]:
-            folder = node["folder"]
-            if folder == "Builtin":
-                continue
-            
-            item = QTreeWidgetItem()
-            item.setText(0, folder)
-            
-            if folder == "Unknown":
-                item.setText(1, "Unknown")
-                item.setForeground(1, QColor("#ffd93d"))
-            elif node["installed"]:
-                item.setText(1, "Installed")
-                item.setForeground(1, QColor("#00ffcc"))
-                installed_count += 1
-            else:
-                item.setText(1, "Missing")
-                item.setForeground(1, QColor("#ff6b6b"))
-                missing_count += 1
-                if node["url"]:
-                    btn = QPushButton("+Queue")
-                    btn.setObjectName("addQueueBtn")
-                    btn.setFixedSize(60, 24)
-                    btn.clicked.connect(lambda c, u=node["url"], n=folder: self.add_node_to_queue(u, n))
-                    self.nodes_tree.setItemWidget(item, 2, btn)
-            
-            self.nodes_tree.addTopLevelItem(item)
-        
-        self.nodes_count.setText(f"OK: {installed_count} / Missing: {missing_count}")
-        
-        # Models
-        self.models_tree.clear()
-        found = missing_m = 0
-        
-        for model in deps["models"]:
-            item = QTreeWidgetItem()
+        for i, model in enumerate(deps["models"]):
+            self.models_table.insertRow(i)
             name = model["name"]
-            item.setText(0, name if len(name) < 30 else name[:27] + "...")
-            item.setToolTip(0, name)
-            item.setData(0, Qt.UserRole, model)  # Store full model dict for details panel
-            
-            # Confidence badge (column 2)
-            confidence = 0.0
-            method = ""
-            if isinstance(model.get("url"), dict):
-                confidence = model["url"].get("_confidence", 0.0)
-                method = model["url"].get("_method", "")
-            elif isinstance(model.get("info"), dict):
-                confidence = model["info"].get("_confidence", 0.0)
-                method = model["info"].get("_method", "")
-            
-            if model["installed"]:
-                item.setText(1, "설치됨")
-                item.setForeground(1, QColor("#00ffcc"))
-                item.setText(2, "✓")
-                item.setForeground(2, QColor("#00ffcc"))
-                found += 1
-            elif model["url"]:
-                if confidence >= 0.90:
-                    badge = f"✓ {confidence*100:.0f}%"
-                    badge_color = "#00ffcc"
-                elif confidence >= 0.70:
-                    badge = f"~ {confidence*100:.0f}%"
-                    badge_color = "#ffd93d"
-                elif confidence > 0:
-                    badge = f"? {confidence*100:.0f}%"
-                    badge_color = "#ff9e64"
-                else:
-                    badge = "DB"
-                    badge_color = "#7aa2f7"
+            folder = model["folder"]
+            is_installed = model["installed"]
+            url_info = model.get("url") or model.get("info")
+            url = ""
+            if isinstance(url_info, dict):
+                url = url_info.get("url", "")
+            elif isinstance(url_info, str):
+                url = url_info
                 
-                item.setText(1, "다운로드 대기")
-                item.setForeground(1, QColor("#7aa2f7"))
-                item.setText(2, badge)
-                item.setForeground(2, QColor(badge_color))
-                if method:
-                    item.setToolTip(2, f"Match: {method}")
-                
-                btn = QPushButton("다운로드")
-                btn.setObjectName("downloadBtn")
-                btn.setFixedSize(60, 24)
-                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
-                self.models_tree.setItemWidget(item, 3, btn)
-                missing_m += 1
+            # Column 0: Filename
+            item_name = QTableWidgetItem(name)
+            self.models_table.setItem(i, 0, item_name)
+            
+            # Column 1: Type (approximate by folder)
+            item_type = QTableWidgetItem(folder)
+            self.models_table.setItem(i, 1, item_type)
+            
+            # Column 2: Directory
+            item_dir = QTableWidgetItem(f"models/{folder}/")
+            self.models_table.setItem(i, 2, item_dir)
+            
+            # Column 3: Status
+            if is_installed:
+                existing += 1
+                status_text = "EXISTS"
+                status_color = QColor("#10b981")
             else:
-                item.setText(1, "Unknown")
-                item.setForeground(1, QColor("#ffd93d"))
-                item.setText(2, "—")
-                item.setForeground(2, QColor("#565f89"))
-                # Add button to input URL manually
-                btn = QPushButton("URL입력")
-                btn.setObjectName("urlInputBtn")
-                btn.setFixedSize(60, 24)
-                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
-                self.models_tree.setItemWidget(item, 3, btn)
-                missing_m += 1
+                missing += 1
+                status_text = "MISSING"
+                status_color = QColor("#ef4444")
             
-            self.models_tree.addTopLevelItem(item)
+            item_status = QTableWidgetItem(status_text)
+            item_status.setForeground(status_color)
+            font = item_status.font()
+            font.setBold(True)
+            item_status.setFont(font)
+            self.models_table.setItem(i, 3, item_status)
+            
+            # Column 4: Source
+            source_text = url if url else "Unknown"
+            item_source = QTableWidgetItem(source_text)
+            if url:
+                item_source.setForeground(QColor("#3b82f6"))
+            self.models_table.setItem(i, 4, item_source)
+            
+            # Column 5: Action Button
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(4, 4, 4, 4)
+            btn = QPushButton("Download" if not is_installed else "Re-download")
+            btn.setObjectName("tableActionBtn")
+            btn.setCursor(Qt.PointingHandCursor)
+            
+            if not is_installed and url:
+                downloadable += 1
+                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
+            elif not url:
+                btn.setText("Manual URL")
+                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
+            else:
+                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
+                
+            action_layout.addWidget(btn)
+            self.models_table.setCellWidget(i, 5, action_widget)
+            
+            # Provide tooltips
+            item_name.setToolTip(name)
+            item_source.setToolTip(source_text)
+
+        # Update Banner Stats
+        self.stat_total.setText(str(total))
+        self.stat_existing.setText(str(existing))
+        self.stat_missing.setText(str(missing))
+        self.stat_downloadable.setText(str(downloadable))
         
-        self.models_count.setText(f"OK: {found} / Missing: {missing_m}")
+        self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
 
     def _on_model_selected(self, current, previous):
         """Update Model Details panel when a model is selected."""
@@ -1856,74 +1612,59 @@ class ManagerWindow(QMainWindow):
     def add_node_to_queue(self, url, name):
         if (url, name) not in self.queue_nodes:
             self.queue_nodes.append((url, name))
-            self.update_queue_display()
-            self.start_queue_btn.setEnabled(True)
             self.status_bar.showMessage(f"Added {name} to queue")
+            self.start_queue_download()
     
     def add_model_to_queue(self, name, url):
         if (name, url) not in self.queue_models:
             self.queue_models.append((name, url))
-            self.update_queue_display()
-            self.start_queue_btn.setEnabled(True)
             self.status_bar.showMessage(f"Added {name[:30]} to queue")
+            self.start_queue_download()
     
     def show_url_input_dialog(self, model_name):
         """Show dialog for user to input download URL for unknown model."""
-        # Guess folder from model name
         folder = guess_model_folder(model_name)
-        
         dialog = ModelUrlInputDialog(model_name, folder, self)
         if dialog.exec() == QDialog.Accepted:
             url, save_to_db = dialog.get_result()
             if url:
-                # Save to DB if requested
                 if save_to_db:
                     success, msg = save_url_to_model_db(model_name, url, folder)
                     if success:
                         self.status_bar.showMessage(f"Saved {model_name} to DB")
                 
-                # Add to queue
                 self.add_model_to_queue(model_name, url)
-                
-                # Refresh dependencies display
-                current = self.workflow_list.currentItem()
-                if current:
-                    self.check_dependencies(current.data(Qt.UserRole))
     
     def clear_queue(self):
         self.queue_nodes = []
         self.queue_models = []
-        self.queue_list.clear()
-        self.queue_summary.setText("Queue cleared")
-        self.start_queue_btn.setEnabled(False)
         self.queue_progress_bar.setValue(0)
         self.queue_current_label.setText("Ready")
         self.queue_detail_label.setText("")
+        self.queue_progress_frame.hide()
     
     def start_queue_download(self):
         if not self.queue_nodes and not self.queue_models:
             return
+            
+        if hasattr(self, 'download_worker') and self.download_worker.isRunning():
+            return  # Already running, queued items will be picked up on next start maybe. 
+            # Or better, we only pop what was given. But Downloadworker takes lists up front.
         
-        total = len(self.queue_nodes) + len(self.queue_models)
-        reply = QMessageBox.question(self, "Start Download",
-            f"Download {total} item(s)?\n\n"
-            f"• {len(self.queue_nodes)} node(s)\n"
-            f"• {len(self.queue_models)} model(s)\n\n"
-            "This may take a while for large models.",
-            QMessageBox.Yes | QMessageBox.No)
-        
-        if reply != QMessageBox.Yes:
-            return
-        
-        self.start_queue_btn.setEnabled(False)
+        self.queue_progress_frame.show()
         self.run_btn.setEnabled(False)
         
-        self.download_worker = DownloadQueueWorker(self.queue_nodes, self.queue_models)
+        # Pass a copy so we can clear our local queue or manage it
+        self.download_worker = DownloadQueueWorker(list(self.queue_nodes), list(self.queue_models))
         self.download_worker.item_started.connect(self.on_queue_item_started)
         self.download_worker.item_progress.connect(self.on_queue_item_progress)
         self.download_worker.item_finished.connect(self.on_queue_item_finished)
         self.download_worker.all_finished.connect(self.on_queue_all_finished)
         self.download_worker.start()
+        
+        # Clean local queues as they are now handed off to worker
+        self.queue_nodes.clear()
+        self.queue_models.clear()
     
     def on_queue_item_started(self, name, index, total):
         self.queue_current_label.setText(f"[{index}/{total}] {name}")
@@ -1937,6 +1678,9 @@ class ManagerWindow(QMainWindow):
             mb_down = downloaded / (1024 * 1024)
             mb_total = total_bytes / (1024 * 1024)
             self.queue_detail_label.setText(f"{mb_down:.1f} MB / {mb_total:.1f} MB")
+            
+            # Estimate percentage based on current item download + overall index progress
+            # To be accurate we'd need more logic, but this is ok for now.
         QApplication.processEvents()
     
     def on_queue_item_finished(self, name, success, message, warning):
@@ -1950,13 +1694,13 @@ class ManagerWindow(QMainWindow):
         self.queue_progress_bar.setValue(100)
         self.queue_current_label.setText("Complete!")
         self.queue_detail_label.setText("")
+        self.queue_progress_frame.hide()
         
-        self.queue_nodes = []
-        self.queue_models = []
-        self.queue_list.clear()
-        
-        self.start_queue_btn.setEnabled(False)
         self.run_btn.setEnabled(True)
+        
+        # Refresh the tabular UI to show EXSTS instead of MISSING
+        self.populate_all_models_table()
+
         
         self.queue_summary.setText("All downloads complete! ✓")
         
