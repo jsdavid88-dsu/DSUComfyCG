@@ -46,6 +46,8 @@ Helper\run_comfy.bat
 
 Then open your browser and go to `http://localhost:8188`
 
+<img src="docs/images/tabular_ui_preview.png" alt="DSUComfyCG Manager UI" width="800">
+
 ### System Requirements
 
 - **OS**: Windows 10/11 (64-bit)
@@ -109,8 +111,9 @@ Manager\run_manager.bat
 
 The Manager handles workflow validation, node installation, and model management automatically.
 
-**🔥 NEW in v1.1: Advanced Model Downloader Features!**
-For an in-depth guide on the new 3-column UI, Tavily AI Search, and manual source management, please see the **[DSUComfyCG Manager User Manual](user_manual.md)**.
+**🔥 NEW in v1.2: One-Click Tabular "Easy Install" UI!**
+The manager has been completely overhauled with a sleek, dark-themed tabular interface allowing you to view, filter, and 1-click download missing models and nodes directly from a single unified table.
+For an in-depth guide on the new Tabular UI, Tavily AI Search, and manual source management, please see the **[DSUComfyCG Manager User Manual](user_manual.md)**.
 
 For older legacy information, see the [Manager Guide](docs/manager_guide.md).
 
@@ -143,6 +146,8 @@ Helper\run_comfy.bat
 ```
 
 브라우저에서 `http://localhost:8188` 접속
+
+<img src="docs/images/tabular_ui_preview.png" alt="DSUComfyCG Manager UI" width="800">
 
 ### 시스템 요구사항
 
@@ -200,10 +205,12 @@ Helper\run_comfy.bat
 
 ## 🎛️ 매니저 사용법
 
-**📢 신규 기능 (v1.1 업데이트): 스마트 3단 레이아웃 및 AI 고급 검색 탑재!**
+**📢 신규 기능 (v1.2 업데이트): 원클릭 Tabular "Easy Install" UI 탑재!**
+복잡한 다중 패널이 완전히 폐기되고 1-Click 다운로드와 진행 상황을 곧바로 알 수 있는 세련된 6열(Column) 형태의 표(Table) UI로 전면 개편되었습니다. 모델 필터링부터 Missing 모델 다운로드까지 한 화면에서 관리하세요!
+
 새롭게 개편된 UI와 Tavily AI 엔진을 활용한 고급 모델 탐색, 수동 다운로드 소스 추가, 모델 캐싱 관리에 대한 자세한 설명과 튜토리얼은 **[➡️ DSUComfyCG Manager 사용자 설명서](user_manual.md)** 를 클릭하여 반드시 확인해주세요!
 
-DSUComfyCG Manager는 워크플로우의 의존성을 분석하고 자동으로 설치하는 GUI 도구입니다.
+DSUComfyCG Manager는 워크플로우의 의존성을 분석하고 자동으로 설치하는 정교한 GUI 도구입니다.
 
 ### 매니저 실행
 
@@ -213,14 +220,13 @@ Manager\run_manager.bat
 
 ### 주요 기능
 
-#### 1. 워크플로우 등록 및 검증
+#### 1. 인라인 표(Table) 형태 직관적 모델/노드 관리
 
 ```
-[워크플로우 탭]
-1. "워크플로우 추가" 버튼 클릭
-2. JSON 파일 선택
-3. 자동으로 필요한 노드/모델 분석
-4. "모두 설치" 클릭
+[Workflow Models 탭 (새 UI)]
+1. 상단 배너에서 직관적인 TOTAL, EXISTING, MISSING 카운터 확인
+2. 표에 나타난 모든 "MISSING" 모델 및 노드 우측 'Download' 버튼 클릭
+3. 하단 진행 표시줄(ProgressBar)을 통해 백그라운드 다운로드 진행 상황 실시간 확인
 ```
 
 <details>
