@@ -1297,6 +1297,42 @@ def run_comfyui():
         return False
 
 
+def install_comfyui(progress_cb=None):
+    """
+    Clones the ComfyUI repository if it doesn't exist into COMFY_PATH.
+    Returns (success, message).
+    """
+    if os.path.exists(COMFY_PATH) and os.path.exists(os.path.join(COMFY_PATH, "main.py")):
+        return True, "ComfyUI is already installed."
+        
+    try:
+        if progress_cb:
+            progress_cb("Cloning ComfyUI repository from github...")
+            
+        logger.info(f"Cloning ComfyUI into {COMFY_PATH}")
+        process = subprocess.Popen(
+            ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", COMFY_PATH],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        stdout, stderr = process.communicate()
+        
+        if process.returncode == 0:
+            if progress_cb:
+                progress_cb("ComfyUI repository cloned successfully.")
+            return True, "Successfully installed ComfyUI."
+        else:
+            err_msg = f"Git clone failed:\n{stderr}"
+            logger.error(err_msg)
+            return False, err_msg
+            
+    except Exception as e:
+        err_msg = f"Failed to clone ComfyUI: {e}"
+        logger.error(err_msg)
+        return False, err_msg
+
+
 # =============================================================================
 # Version Control & Update System
 # =============================================================================

@@ -23,7 +23,7 @@ from PySide6.QtGui import QColor, QFont, QAction, QCursor
 
 from core.checker import (
     scan_workflows, check_workflow_dependencies, get_system_status,
-    install_node, run_comfyui, sync_workflows, fetch_node_db, NODE_DB,
+    install_node, run_comfyui, install_comfyui, sync_workflows, fetch_node_db, NODE_DB,
     download_model, load_model_db, MODEL_DB,
     check_for_updates, perform_update, get_local_version,
     check_comfyui_version, check_custom_nodes_updates, 
@@ -1185,7 +1185,7 @@ class ManagerWindow(QMainWindow):
         
         self.run_btn = QPushButton("Run ComfyUI")
         self.run_btn.setObjectName("primaryBtn")
-        self.run_btn.clicked.connect(self.run_comfy)
+        self.run_btn.clicked.connect(self.handle_comfy_action)
         self.run_btn.setEnabled(False)
         layout.addWidget(self.run_btn)
         
@@ -1193,8 +1193,15 @@ class ManagerWindow(QMainWindow):
     
     def _get_stylesheet(self):
         return """
-            QMainWindow, #mainContentArea {
+            QMainWindow {
                 background-color: #0f172a;
+            }
+            QWidget {
+                color: #f8fafc;
+            }
+            #mainContentArea, QScrollArea, QScrollArea > QWidget > QWidget {
+                background-color: #0f172a;
+                border: none;
             }
             #sidebarFrame {
                 background-color: #1e293b;
@@ -1968,12 +1975,47 @@ class ManagerWindow(QMainWindow):
             parts.append(status["gpu_name"][:30])
         parts.append(f"DB: {status['node_db_size']}")
         self.system_info.setText(" | ".join(parts))
-    
-    def run_comfy(self):
-        if run_comfyui():
-            QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
+        
+        # UI toggling for Install vs Run
+        if not status.get("comfy_installed", False):
+            self.run_btn.setText("Install ComfyUI")
+            self.run_btn.setStyleSheet("""
+                #primaryBtn {
+                    background-color: #10b981; color: #ffffff;
+                }
+                #primaryBtn:hover { background-color: #059669; }
+                #primaryBtn:pressed { background-color: #047857; }
+            """)
         else:
-            QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
+            self.run_btn.setText("Run ComfyUI")
+            self.run_btn.setStyleSheet("") # Revert to default stylesheet class
+    
+    def handle_comfy_action(self):
+        """Handle Run or Install comfyUI action."""
+        if self.run_btn.text() == "Install ComfyUI":
+            reply = QMessageBox.question(
+                self, "ComfyUI 설치",
+                "ComfyUI 코어를 설치하시겠습니까?\n이 컴퓨터에 Git이 설치되어 있어야 합니다.",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.run_btn.setEnabled(False)
+                self.run_btn.setText("Installing...")
+                QApplication.processEvents()
+                
+                success, msg = install_comfyui()
+                if success:
+                    QMessageBox.information(self, "설치 완료", "ComfyUI가 성공적으로 설치되었습니다!\n\n앱을 재시작해주세요.")
+                    self.refresh_system_status()
+                else:
+                    QMessageBox.warning(self, "설치 실패", f"설치 중 오류가 발생했습니다:\n{msg}")
+                    self.run_btn.setText("Install ComfyUI")
+                    self.run_btn.setEnabled(True)
+        else:
+            if run_comfyui():
+                QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
+            else:
+                QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
     
     def refresh_system_status(self):
         """Refresh system status panel with current info."""
