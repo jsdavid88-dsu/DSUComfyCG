@@ -42,10 +42,132 @@ logger = logging.getLogger("Checker")
 MANAGER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_DIR = os.path.dirname(MANAGER_DIR)
 WORKFLOWS_DIR = os.path.join(BASE_DIR, "workflows")
-COMFY_PATH = os.path.join(BASE_DIR, "ComfyUI")
-CUSTOM_NODES_PATH = os.path.join(COMFY_PATH, "custom_nodes")
-MODELS_PATH = os.path.join(COMFY_PATH, "models")
-PYTHON_PATH = os.path.join(BASE_DIR, "python_embeded", "python.exe")
+# --- Multi-Instance Environment Management ---
+ENVS_FILE = os.path.join(MANAGER_DIR, "data", "envs.json")
+ACTIVE_ENV_ID = "env_default"
+ENVIRONMENTS = {}
+
+def load_envs():
+    global ENVIRONMENTS, ACTIVE_ENV_ID
+    if os.path.exists(ENVS_FILE):
+        try:
+            with open(ENVS_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                ENVIRONMENTS = data.get("environments", {})
+                ACTIVE_ENV_ID = data.get("active_env_id", "env_default")
+        except Exception as e:
+            logger.error(f"Failed to load envs.json: {e}")
+            
+    if "env_default" not in ENVIRONMENTS:
+        ENVIRONMENTS["env_default"] = {
+            "name": "Default ComfyUI",
+            "type": "production",
+            "path": os.path.join(BASE_DIR, "ComfyUI").replace("\\", "/"),
+            "memo": "Default built-in installation"
+        }
+
+def save_envs():
+    try:
+        data = {
+            "active_env_id": ACTIVE_ENV_ID,
+            "environments": ENVIRONMENTS
+        }
+        os.makedirs(os.path.dirname(ENVS_FILE), exist_ok=True)
+        with open(ENVS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        logger.error(f"Failed to save envs.json: {e}")
+
+def get_active_env():
+    return ENVIRONMENTS.get(ACTIVE_ENV_ID, ENVIRONMENTS.get("env_default", {}))
+
+def set_active_env(env_id):
+    global ACTIVE_ENV_ID
+    if env_id in ENVIRONMENTS:
+        ACTIVE_ENV_ID = env_id
+        save_envs()
+        read_extra_model_paths() # Reload extra tracking for new environment
+        return True
+    return False
+
+def add_environment(env_id, name, type_desc, path, memo=""):
+    if env_id in ENVIRONMENTS:
+        return False, "Environment ID already exists"
+    
+    ENVIRONMENTS[env_id] = {
+        "name": name,
+        "type": type_desc,
+        "path": path.replace("\\", "/"),
+        "memo": memo
+    }
+    save_envs()
+    return True, "Environment added"
+
+def remove_environment(env_id):
+    if env_id == "env_default":
+        return False, "Cannot delete default environment"
+        
+    if env_id in ENVIRONMENTS:
+        del ENVIRONMENTS[env_id]
+        if ACTIVE_ENV_ID == env_id:
+            set_active_env("env_default")
+        else:
+            save_envs()
+        return True, "Environment removed"
+    return False, "Environment not found"
+
+def update_environment_memo(env_id, memo):
+    if env_id in ENVIRONMENTS:
+        ENVIRONMENTS[env_id]["memo"] = memo
+        save_envs()
+        return True
+    return False
+
+def update_environment_field(env_id, field, value):
+    if env_id in ENVIRONMENTS:
+        ENVIRONMENTS[env_id][field] = value
+        save_envs()
+        return True
+    return False
+
+def duplicate_environment(env_id):
+    if env_id not in ENVIRONMENTS:
+        return False, "Source environment not found"
+        
+    src = ENVIRONMENTS[env_id]
+    import random, string, re
+    safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', src.get('name', 'env'))
+    new_id = f"env_{safe_name.lower()}_copy_{''.join(random.choices(string.ascii_lowercase + string.digits, k=4))}"
+    new_name = src.get('name', 'Env') + " (Copy)"
+    new_path = src.get('path', '') + f"_copy_{random.randint(100,999)}"
+    
+    ENVIRONMENTS[new_id] = {
+        "name": new_name,
+        "type": src.get("type", "sandbox"),
+        "path": new_path.replace("\\", "/"),
+        "memo": src.get("memo", "") + " (Cloned)"
+    }
+    save_envs()
+    return True, f"Environment cloned successfully!\nNew path: {new_path}\nPlease click Install on the new row to set it up."
+
+def get_comfy_path():
+    env = get_active_env()
+    return env.get("path", os.path.join(BASE_DIR, "ComfyUI").replace("\\", "/"))
+
+def get_custom_nodes_path():
+    return os.path.join(get_comfy_path(), "custom_nodes").replace("\\", "/")
+
+def get_models_path():
+    return os.path.join(get_comfy_path(), "models").replace("\\", "/")
+
+def get_python_path():
+    env = get_active_env()
+    if "python_path" in env and env["python_path"]:
+        return env["python_path"]
+    return os.path.join(BASE_DIR, "python_embeded", "python.exe").replace("\\", "/")
+
+load_envs()
+# -----------------------------------------------
 CACHE_DIR = os.path.join(MANAGER_DIR, "cache")
 
 # Local Data Files (Version Controlled)
@@ -130,6 +252,46 @@ def fetch_ext_model_db():
     except Exception as e:
         logger.warning(f"Failed to fetch external model list: {e}")
 
+
+# --- Models Path Manager --- #
+def read_extra_model_paths():
+    global EXTRA_MODEL_PATHS
+    EXTRA_MODEL_PATHS = {}
+    yaml_path = os.path.join(get_comfy_path(), 'extra_model_paths.yaml')
+    if not os.path.isfile(yaml_path):
+        return EXTRA_MODEL_PATHS
+    try:
+        import yaml
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            data = yaml.safe_load(f)
+        if data:
+            for conf_name, conf in data.items():
+                if isinstance(conf, dict) and 'base_path' in conf:
+                    base = conf['base_path']
+                    for mtype, paths in conf.items():
+                        if mtype == 'base_path': continue
+                        if isinstance(paths, str): paths = [paths]
+                        for p in paths:
+                            full_path = p if os.path.isabs(p) else os.path.join(base, p)
+                            EXTRA_MODEL_PATHS.setdefault(mtype, []).append(full_path.replace('\\\\', '/'))
+    except Exception as e:
+        logger.warning(f'Failed to read extra paths: {e}')
+    return EXTRA_MODEL_PATHS
+
+def write_extra_model_paths(paths_dict):
+    yaml_path = os.path.join(get_comfy_path(), 'extra_model_paths.yaml')
+    try:
+        import yaml
+        config = {'dsucomfycg_shared': {'base_path': '.'}}
+        for k, v in paths_dict.items():
+            config['dsucomfycg_shared'][k] = v
+        with open(yaml_path, 'w', encoding='utf-8') as f:
+            yaml.dump(config, f, default_flow_style=False)
+        read_extra_model_paths() # Reload
+        return True
+    except Exception as e:
+        logger.error(f'Failed to write extra paths: {e}')
+        return False
 
 def check_model_in_db(model_name):
     """Check if a model is in our MODEL_DB or External DB. Returns (in_db, info_dict).
@@ -558,48 +720,6 @@ def search_huggingface(model_name):
         return None, None
 
 
-def check_model_in_db(model_name):
-    """Check if a model is in our MODEL_DB. Returns (in_db, info_dict).
-    
-    Falls back to HuggingFace search if not found in local DB.
-    """
-    logger.info(f"[Model Check] Looking for: {model_name}")
-    
-    # Direct match
-    if model_name in MODEL_DB:
-        logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
-        return True, MODEL_DB[model_name]
-    
-    # Try without path prefix (e.g., "Kijai_WAN/file.safetensors" -> "file.safetensors")
-    basename = os.path.basename(model_name.replace("\\", "/"))
-    if basename in MODEL_DB:
-        logger.info(f"[Model Check] ✓ Basename match: {basename}")
-        return True, MODEL_DB[basename]
-    
-    # Try with path variations
-    for key, info in MODEL_DB.items():
-        if basename == os.path.basename(key):
-            logger.info(f"[Model Check] ✓ Key basename match: {key}")
-            return True, info
-    
-    logger.info(f"[Model Check] Not in MODEL_DB, searching HuggingFace...")
-    
-    # Fallback: Search HuggingFace
-    repo_id, filename = search_huggingface(model_name)
-    if repo_id and filename:
-        logger.info(f"[Model Check] ✓ Found on HuggingFace: {repo_id}/{filename}")
-        # Create a dynamic entry
-        return True, {
-            "repo_id": repo_id,
-            "filename": filename,
-            "folder": guess_model_folder(basename),
-            "description": f"Auto-found on HuggingFace"
-        }
-    
-    logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
-    return False, None
-
-
 def guess_model_folder(filename):
     """Guess the appropriate folder for a model based on its name."""
     lower = filename.lower()
@@ -713,9 +833,9 @@ def download_model(model_name, progress_callback=None):
     folder_key = info.get("folder", "checkpoints")
     folder_path = FOLDER_MAPPINGS.get(folder_key, f"ComfyUI/models/{folder_key}")
     # Also check EXTRA_MODEL_PATHS
-    if folder_key in EXTRA_MODEL_PATHS:
-        folder_path = EXTRA_MODEL_PATHS[folder_key]
-    target_dir = os.path.join(BASE_DIR, folder_path)
+    if folder_key in EXTRA_MODEL_PATHS and len(EXTRA_MODEL_PATHS[folder_key]) > 0:
+        folder_path = EXTRA_MODEL_PATHS[folder_key][0]
+    target_dir = os.path.join(BASE_DIR, folder_path) if not os.path.isabs(folder_path) else folder_path
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
@@ -896,20 +1016,20 @@ def check_node_installed(node_type):
     # Direct DB match
     if node_type in NODE_DB:
         folder_name, git_url = NODE_DB[node_type]
-        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+        node_path = os.path.join(get_custom_nodes_path(), folder_name)
         return os.path.exists(node_path), folder_name, git_url
     
     # Fallback DB match (for nodes not in ComfyUI-Manager DB)
     if node_type in FALLBACK_NODE_DB:
         folder_name, git_url = FALLBACK_NODE_DB[node_type]
-        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+        node_path = os.path.join(get_custom_nodes_path(), folder_name)
         return os.path.exists(node_path), folder_name, git_url
     
     # Normalized match (remove parentheses suffix like "(rgthree)")
     normalized = re.sub(r'\s*\([^)]+\)\s*$', '', node_type).strip()
     if normalized != node_type and normalized in NODE_DB:
         folder_name, git_url = NODE_DB[normalized]
-        node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+        node_path = os.path.join(get_custom_nodes_path(), folder_name)
         return os.path.exists(node_path), folder_name, git_url
     
     # Package hint from parentheses - search NODE_DB for matching folder
@@ -922,19 +1042,19 @@ def check_node_installed(node_type):
             folder_name, git_url = v
             folder_lower = folder_name.lower().replace('-', '').replace('_', '')
             if package_hint in folder_lower:
-                node_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+                node_path = os.path.join(get_custom_nodes_path(), folder_name)
                 return os.path.exists(node_path), folder_name, git_url
         
         # Also check installed folders
-        if os.path.exists(CUSTOM_NODES_PATH):
-            for folder in os.listdir(CUSTOM_NODES_PATH):
+        if os.path.exists(get_custom_nodes_path()):
+            for folder in os.listdir(get_custom_nodes_path()):
                 if package_hint in folder.lower().replace('-', '').replace('_', ''):
                     return True, folder, None
     
     # Heuristic folder scan (for already installed nodes not in DB)
-    if os.path.exists(CUSTOM_NODES_PATH):
+    if os.path.exists(get_custom_nodes_path()):
         search = node_type.lower().replace('_', '').replace(' ', '')
-        for folder in os.listdir(CUSTOM_NODES_PATH):
+        for folder in os.listdir(get_custom_nodes_path()):
             folder_lower = folder.lower().replace('-', '').replace('_', '')
             if search in folder_lower or folder_lower in search:
                 return True, folder, None
@@ -951,7 +1071,7 @@ def check_model_installed(model_name):
     basename = os.path.basename(model_name.replace("\\", "/"))
     
     # Search all model directories (including extra paths)
-    search_paths = [MODELS_PATH]
+    search_paths = [get_models_path()]
     for extra_path in EXTRA_MODEL_PATHS.values():
         if os.path.isabs(extra_path):
             search_paths.append(extra_path)
@@ -1089,7 +1209,7 @@ def check_dependency_conflicts(requirements):
 def snapshot_packages():
     """Take a snapshot of currently installed packages for potential rollback."""
     try:
-        result = subprocess.run([PYTHON_PATH, "-m", "pip", "freeze"], capture_output=True, text=True, timeout=60)
+        result = subprocess.run([get_python_path(), "-m", "pip", "freeze"], capture_output=True, text=True, timeout=60)
         if result.returncode == 0:
             packages = {}
             for line in result.stdout.strip().split('\n'):
@@ -1116,7 +1236,7 @@ def restore_packages(snapshot, changed_packages):
             logger.info(f"Rolling back {pkg} to {old_ver}...")
             try:
                 subprocess.run(
-                    [PYTHON_PATH, "-m", "pip", "install", f"{pkg}=={old_ver}", "--quiet"],
+                    [get_python_path(), "-m", "pip", "install", f"{pkg}=={old_ver}", "--quiet"],
                     capture_output=True, timeout=120
                 )
                 restored_count += 1
@@ -1135,7 +1255,7 @@ def install_node(git_url, enable_rollback=True):
         return False, "No URL provided", None
 
     folder_name = git_url.rstrip('/').split('/')[-1].replace('.git', '')
-    target_path = os.path.join(CUSTOM_NODES_PATH, folder_name)
+    target_path = os.path.join(get_custom_nodes_path(), folder_name)
 
     if os.path.exists(target_path):
         return True, f"Already installed at {folder_name}", None
@@ -1159,12 +1279,12 @@ def install_node(git_url, enable_rollback=True):
                 logger.warning(f"Dependency conflicts detected for {folder_name}:\n{msg}")
             
             logger.info(f"Installing dependencies for {folder_name}...")
-            subprocess.check_call([PYTHON_PATH, "-m", "pip", "install", "-r", req_path])
+            subprocess.check_call([get_python_path(), "-m", "pip", "install", "-r", req_path])
             
             # Post-install check
             try:
                 logger.info(f"Verifying environment health...")
-                check_res = subprocess.run([PYTHON_PATH, "-m", "pip", "check"], capture_output=True, text=True)
+                check_res = subprocess.run([get_python_path(), "-m", "pip", "check"], capture_output=True, text=True)
                 if check_res.returncode != 0:
                     broken_msg = check_res.stdout.strip()
                     logger.warning(f"Environment has broken dependencies:\n{broken_msg}")
@@ -1191,7 +1311,7 @@ def install_node(git_url, enable_rollback=True):
         install_script = os.path.join(target_path, "install.py")
         if os.path.exists(install_script):
             logger.info(f"Running install.py for {folder_name}...")
-            subprocess.check_call([PYTHON_PATH, install_script])
+            subprocess.check_call([get_python_path(), install_script])
             
         warning_msg = "\n".join(conflicts) if conflicts else None
         return True, f"Successfully installed {folder_name}", warning_msg
@@ -1210,8 +1330,8 @@ def install_node(git_url, enable_rollback=True):
 def get_system_status():
     """Get system information."""
     status = {
-        "comfyui_installed": os.path.exists(COMFY_PATH),
-        "python_installed": os.path.exists(PYTHON_PATH),
+        "comfyui_installed": os.path.exists(get_comfy_path()),
+        "python_installed": os.path.exists(get_python_path()),
         "python_version": None,
         "cuda_available": False,
         "gpu_name": None,
@@ -1221,7 +1341,7 @@ def get_system_status():
     if status["python_installed"]:
         try:
             result = subprocess.run(
-                [PYTHON_PATH, "--version"],
+                [get_python_path(), "--version"],
                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
             )
             status["python_version"] = result.stdout.strip().replace("Python ", "")
@@ -1230,7 +1350,7 @@ def get_system_status():
     
     try:
         result = subprocess.run(
-            [PYTHON_PATH, "-c", "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"],
+            [get_python_path(), "-c", "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else '')"],
             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10
         )
         lines = result.stdout.strip().split('\n')
@@ -1288,7 +1408,7 @@ def run_comfyui():
     """Launch ComfyUI."""
     try:
         subprocess.Popen(
-            [PYTHON_PATH, "-I", os.path.join(COMFY_PATH, "main.py"), "--windows-standalone-build"],
+            [get_python_path(), "-I", os.path.join(get_comfy_path(), "main.py"), "--windows-standalone-build"],
             cwd=BASE_DIR
         )
         return True
@@ -1299,19 +1419,20 @@ def run_comfyui():
 
 def install_comfyui(progress_cb=None):
     """
-    Clones the ComfyUI repository if it doesn't exist into COMFY_PATH.
+    Clones the ComfyUI repository if it doesn't exist into get_comfy_path().
     Returns (success, message).
     """
-    if os.path.exists(COMFY_PATH) and os.path.exists(os.path.join(COMFY_PATH, "main.py")):
+    if os.path.exists(get_comfy_path()) and os.path.exists(os.path.join(get_comfy_path(), "main.py")):
         return True, "ComfyUI is already installed."
         
     try:
         if progress_cb:
             progress_cb("Cloning ComfyUI repository from github...")
             
-        logger.info(f"Cloning ComfyUI into {COMFY_PATH}")
+        logger.info(f"Cloning ComfyUI into {get_comfy_path()}")
+        os.makedirs(os.path.dirname(get_comfy_path()), exist_ok=True)
         process = subprocess.Popen(
-            ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", COMFY_PATH],
+            ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", get_comfy_path()],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -1453,7 +1574,7 @@ def check_comfyui_version():
     }
     """
     result = {
-        "installed": os.path.exists(COMFY_PATH),
+        "installed": os.path.exists(get_comfy_path()),
         "current_commit": None,
         "latest_commit": None,
         "update_available": False,
@@ -1465,7 +1586,7 @@ def check_comfyui_version():
         result["error"] = "ComfyUI not installed"
         return result
     
-    git_dir = os.path.join(COMFY_PATH, ".git")
+    git_dir = os.path.join(get_comfy_path(), ".git")
     if not os.path.exists(git_dir):
         result["error"] = "Not a git repository"
         return result
@@ -1474,38 +1595,38 @@ def check_comfyui_version():
         # Fetch latest (don't pull, just fetch)
         subprocess.run(
             ["git", "fetch", "origin"],
-            capture_output=True, cwd=COMFY_PATH, timeout=30
+            capture_output=True, cwd=get_comfy_path(), timeout=30
         )
         
         # Get current commit
         current = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, cwd=COMFY_PATH
+            capture_output=True, text=True, cwd=get_comfy_path()
         )
         result["current_commit"] = current.stdout.strip()
         
         # Get remote latest commit
         remote = subprocess.run(
             ["git", "rev-parse", "--short", "origin/master"],
-            capture_output=True, text=True, cwd=COMFY_PATH
+            capture_output=True, text=True, cwd=get_comfy_path()
         )
         if remote.returncode != 0:
             # Try origin/main instead
             remote = subprocess.run(
                 ["git", "rev-parse", "--short", "origin/main"],
-                capture_output=True, text=True, cwd=COMFY_PATH
+                capture_output=True, text=True, cwd=get_comfy_path()
             )
         result["latest_commit"] = remote.stdout.strip()
         
         # Count commits behind
         behind = subprocess.run(
             ["git", "rev-list", "--count", "HEAD..origin/master"],
-            capture_output=True, text=True, cwd=COMFY_PATH
+            capture_output=True, text=True, cwd=get_comfy_path()
         )
         if behind.returncode != 0:
             behind = subprocess.run(
                 ["git", "rev-list", "--count", "HEAD..origin/main"],
-                capture_output=True, text=True, cwd=COMFY_PATH
+                capture_output=True, text=True, cwd=get_comfy_path()
             )
         
         try:
@@ -1535,11 +1656,11 @@ def check_custom_nodes_updates():
     """
     results = []
     
-    if not os.path.exists(CUSTOM_NODES_PATH):
+    if not os.path.exists(get_custom_nodes_path()):
         return results
     
-    for node_name in os.listdir(CUSTOM_NODES_PATH):
-        node_path = os.path.join(CUSTOM_NODES_PATH, node_name)
+    for node_name in os.listdir(get_custom_nodes_path()):
+        node_path = os.path.join(get_custom_nodes_path(), node_name)
         
         if not os.path.isdir(node_path):
             continue
@@ -1593,14 +1714,14 @@ def check_custom_nodes_updates():
 
 def update_comfyui():
     """Update ComfyUI via git pull. Returns (success, message)."""
-    if not os.path.exists(COMFY_PATH):
+    if not os.path.exists(get_comfy_path()):
         return False, "ComfyUI not installed"
     
     try:
         logger.info("Updating ComfyUI...")
         result = subprocess.run(
             ["git", "pull"],
-            capture_output=True, text=True, cwd=COMFY_PATH, timeout=120
+            capture_output=True, text=True, cwd=get_comfy_path(), timeout=120
         )
         
         if result.returncode == 0:
@@ -1613,7 +1734,7 @@ def update_comfyui():
 
 def update_custom_node(node_name):
     """Update a single custom node. Returns (success, message)."""
-    node_path = os.path.join(CUSTOM_NODES_PATH, node_name)
+    node_path = os.path.join(get_custom_nodes_path(), node_name)
     
     if not os.path.exists(node_path):
         return False, f"Node {node_name} not found"
@@ -1689,7 +1810,7 @@ def load_extra_model_paths():
     """Load extra model paths from ComfyUI's extra_model_paths.yaml."""
     global EXTRA_MODEL_PATHS
     
-    yaml_path = os.path.join(COMFY_PATH, "extra_model_paths.yaml")
+    yaml_path = os.path.join(get_comfy_path(), "extra_model_paths.yaml")
     if not os.path.exists(yaml_path):
         return
     
@@ -1744,12 +1865,12 @@ def scan_all_workflows_for_models():
     scan_dirs = [WORKFLOWS_DIR]
     
     # ComfyUI user data workflows
-    comfy_user_dir = os.path.join(COMFY_PATH, "user", "default", "workflows")
+    comfy_user_dir = os.path.join(get_comfy_path(), "user", "default", "workflows")
     if os.path.exists(comfy_user_dir):
         scan_dirs.append(comfy_user_dir)
     
     # ComfyUI input directory (sometimes has workflows)
-    comfy_input_dir = os.path.join(COMFY_PATH, "input")
+    comfy_input_dir = os.path.join(get_comfy_path(), "input")
     if os.path.exists(comfy_input_dir):
         scan_dirs.append(comfy_input_dir)
     
@@ -1837,7 +1958,7 @@ def get_all_installed_models():
     models = []
     
     # Search primary models path
-    search_paths = [(MODELS_PATH, "")]
+    search_paths = [(get_models_path(), "")]
     
     # Add extra model paths
     for key, extra_path in EXTRA_MODEL_PATHS.items():

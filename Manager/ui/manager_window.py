@@ -31,7 +31,8 @@ from core.checker import (
     save_url_to_model_db, guess_model_folder,
     get_all_installed_models, get_unused_models,
     scan_all_workflows_for_models, clear_not_found_cache,
-    MODELS_PATH
+    get_models_path, read_extra_model_paths, write_extra_model_paths,
+    ENVIRONMENTS, get_active_env, set_active_env
 )
 from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily
 from core.aria2_downloader import is_aria2_available
@@ -237,6 +238,47 @@ class ManagerWindow(QMainWindow):
         
         layout.addStretch()
         
+        # --- Environment Selector ---
+        env_label = QLabel("Environment:")
+        env_label.setStyleSheet("color: #64748b; font-weight: bold; font-size: 13px;")
+        layout.addWidget(env_label)
+        
+        self.env_combo = QComboBox()
+        self.env_combo.setObjectName("envCombo")
+        self.env_combo.setMinimumWidth(220)
+        self.env_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #ffffff;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 6px 12px;
+                color: #1e293b;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QComboBox:focus { border-color: #3b82f6; }
+        """)
+        layout.addWidget(self.env_combo)
+        
+        self.env_mgr_btn = QPushButton("⚙️ Manage")
+        self.env_mgr_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f5f9;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                color: #475569;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #e2e8f0; color: #1e293b; }
+        """)
+        self.env_mgr_btn.clicked.connect(self._open_env_manager)
+        layout.addWidget(self.env_mgr_btn)
+        
+        layout.addSpacing(15)
+        # --- End Environment ---
+        
         # 1-Click Install All Button
         self.install_all_btn = QPushButton("⚡ One-Click Install All")
         self.install_all_btn.setObjectName("installAllBtn")
@@ -286,7 +328,45 @@ class ManagerWindow(QMainWindow):
         self.system_info.setObjectName("systemInfo")
         layout.addWidget(self.system_info)
         
+        self._populate_envs_combo()
+        self.env_combo.currentIndexChanged.connect(self._on_env_changed)
         return frame
+
+    def _populate_envs_combo(self):
+        self.env_combo.blockSignals(True)
+        self.env_combo.clear()
+        
+        active_index = 0
+        
+        for i, (eid, edata) in enumerate(ENVIRONMENTS.items()):
+            display_name = f"{edata['name']} ({edata['type']})"
+            self.env_combo.addItem(display_name, eid)
+                
+        # Actually correctly locating the active index
+        for i in range(self.env_combo.count()):
+            current_path = get_active_env().get("path", "")
+            if ENVIRONMENTS.get(self.env_combo.itemData(i), {}).get("path") == current_path:
+                active_index = i
+                break
+                
+        self.env_combo.setCurrentIndex(active_index)
+        self.env_combo.blockSignals(False)
+
+    def _on_env_changed(self, index):
+        env_id = self.env_combo.itemData(index)
+        if env_id:
+            set_active_env(env_id)
+            # When environment changes, trigger a full UI reload of states
+            self.refresh_all(scan_workflows=True)
+            self.update_system_status()
+            
+    def _open_env_manager(self):
+        from ui.env_manager_dialog import EnvManagerDialog
+        dlg = EnvManagerDialog(self)
+        if dlg.exec():
+            # Refresh if user made changes in the dialog
+            self._populate_envs_combo()
+            self._on_env_changed(self.env_combo.currentIndex())
     
     def _create_startup_frame(self):
         frame = QFrame()
@@ -312,10 +392,10 @@ class ManagerWindow(QMainWindow):
         frame.setObjectName("statusPanel")
         frame.setStyleSheet("""
             #statusPanel {
-                background: rgba(20, 20, 40, 0.9);
-                border: 1px solid #2a2a4e;
-                border-radius: 12px;
-                padding: 15px;
+                background: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
+                padding: 16px;
             }
         """)
         layout = QVBoxLayout(frame)
@@ -323,7 +403,7 @@ class ManagerWindow(QMainWindow):
         
         # Title
         title = QLabel("📊 시스템 상태")
-        title.setStyleSheet("color: #00ffcc; font-size: 14px; font-weight: bold;")
+        title.setStyleSheet("color: #0f172a; font-size: 16px; font-weight: bold;")
         layout.addWidget(title)
         
         # Status rows
@@ -333,17 +413,17 @@ class ManagerWindow(QMainWindow):
         # ComfyUI row
         comfy_row = QHBoxLayout()
         self.comfy_label = QLabel("ComfyUI")
-        self.comfy_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.comfy_label.setStyleSheet("color: #334155; font-size: 13px; font-weight: 500;")
         self.comfy_status = QLabel("체크 중...")
-        self.comfy_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.comfy_status.setStyleSheet("color: #64748b; font-size: 12px;")
         self.comfy_update_btn = QPushButton("업데이트")
         self.comfy_update_btn.setStyleSheet("""
             QPushButton {
-                background: #4CAF50; color: white; border: none;
-                padding: 4px 8px; border-radius: 3px; font-size: 10px;
+                background: #10b981; color: white; border: none;
+                padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold;
             }
-            QPushButton:hover { background: #45a049; }
-            QPushButton:disabled { background: #555; }
+            QPushButton:hover { background: #059669; }
+            QPushButton:disabled { background: #94a3b8; }
         """)
         self.comfy_update_btn.clicked.connect(self.handle_comfy_update)
         self.comfy_update_btn.hide()
@@ -356,17 +436,17 @@ class ManagerWindow(QMainWindow):
         # Custom Nodes row
         nodes_row = QHBoxLayout()
         self.nodes_label = QLabel("커스텀 노드")
-        self.nodes_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.nodes_label.setStyleSheet("color: #334155; font-size: 13px; font-weight: 500;")
         self.nodes_status = QLabel("체크 중...")
-        self.nodes_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.nodes_status.setStyleSheet("color: #64748b; font-size: 12px;")
         self.nodes_update_btn = QPushButton("전체 업데이트")
         self.nodes_update_btn.setStyleSheet("""
             QPushButton {
-                background: #4CAF50; color: white; border: none;
-                padding: 4px 8px; border-radius: 3px; font-size: 10px;
+                background: #10b981; color: white; border: none;
+                padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: bold;
             }
-            QPushButton:hover { background: #45a049; }
-            QPushButton:disabled { background: #555; }
+            QPushButton:hover { background: #059669; }
+            QPushButton:disabled { background: #94a3b8; }
         """)
         self.nodes_update_btn.clicked.connect(self.handle_nodes_update)
         self.nodes_update_btn.hide()
@@ -379,9 +459,9 @@ class ManagerWindow(QMainWindow):
         # Models row
         models_row = QHBoxLayout()
         self.models_label = QLabel("모델")
-        self.models_label.setStyleSheet("color: #fff; font-size: 12px;")
+        self.models_label.setStyleSheet("color: #334155; font-size: 13px; font-weight: 500;")
         self.models_status = QLabel("체크 중...")
-        self.models_status.setStyleSheet("color: #888; font-size: 11px;")
+        self.models_status.setStyleSheet("color: #64748b; font-size: 12px;")
         models_row.addWidget(self.models_label)
         models_row.addWidget(self.models_status)
         models_row.addStretch()
@@ -409,7 +489,7 @@ class ManagerWindow(QMainWindow):
         
         # 2. Summary Banner
         banner_frame = QFrame()
-        banner_frame.setStyleSheet("background-color: #333333; border: 1px solid #444444; border-radius: 8px;")
+        banner_frame.setStyleSheet("background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;")
         banner_layout = QHBoxLayout(banner_frame)
         banner_layout.setContentsMargins(20, 15, 20, 15)
         banner_layout.setSpacing(40)
@@ -421,16 +501,16 @@ class ManagerWindow(QMainWindow):
             num_label.setStyleSheet(f"color: {color}; font-size: 28px; font-weight: bold; border: none; background: transparent;")
             num_label.setAlignment(Qt.AlignCenter)
             title_label = QLabel(title)
-            title_label.setStyleSheet("color: #a0a0a0; font-size: 11px; font-weight: bold; border: none; background: transparent;")
+            title_label.setStyleSheet("color: #64748b; font-size: 12px; font-weight: bold; border: none; background: transparent;")
             title_label.setAlignment(Qt.AlignCenter)
             vbox.addWidget(num_label)
             vbox.addWidget(title_label)
             return vbox, num_label
             
-        stat1, self.stat_total = _make_stat("TOTAL MODELS", "#ffffff")
-        stat2, self.stat_existing = _make_stat("EXISTING", "#10b981")
+        stat1, self.stat_total = _make_stat("TOTAL MODELS", "#1e293b")
+        stat2, self.stat_existing = _make_stat("EXISTING", "#0d9488")
         stat3, self.stat_missing = _make_stat("MISSING", "#ef4444")
-        stat4, self.stat_downloadable = _make_stat("DOWNLOADABLE", "#10b981")
+        stat4, self.stat_downloadable = _make_stat("DOWNLOADABLE", "#0d9488")
         
         banner_layout.addLayout(stat1)
         banner_layout.addLayout(stat2)
@@ -463,7 +543,7 @@ class ManagerWindow(QMainWindow):
         bottom_layout = QHBoxLayout()
         
         self.table_footer = QLabel("Total: 0 | Existing: 0 | Missing: 0")
-        self.table_footer.setStyleSheet("color: #a0a0a0; font-size: 12px; font-weight: bold;")
+        self.table_footer.setStyleSheet("color: #64748b; font-size: 13px; font-weight: bold;")
         bottom_layout.addWidget(self.table_footer)
         
         bottom_layout.addStretch()
@@ -476,7 +556,7 @@ class ManagerWindow(QMainWindow):
         progress_layout.setContentsMargins(0, 0, 0, 0)
         
         self.queue_current_label = QLabel("Ready")
-        self.queue_current_label.setStyleSheet("color: #10b981; font-size: 11px; font-weight: bold;")
+        self.queue_current_label.setStyleSheet("color: #0d9488; font-size: 12px; font-weight: bold;")
         self.queue_current_label.setFixedWidth(120)
         progress_layout.addWidget(self.queue_current_label)
         
@@ -486,13 +566,13 @@ class ManagerWindow(QMainWindow):
         self.queue_progress_bar.setFixedHeight(14)
         self.queue_progress_bar.setTextVisible(False)
         self.queue_progress_bar.setStyleSheet("""
-            QProgressBar { background: #222222; border: 1px solid #444444; border-radius: 4px; }
-            QProgressBar::chunk { background-color: #10b981; border-radius: 3px; }
+            QProgressBar { background: #e2e8f0; border: none; border-radius: 6px; }
+            QProgressBar::chunk { background-color: #0d9488; border-radius: 6px; }
         """)
         progress_layout.addWidget(self.queue_progress_bar)
         
         self.queue_detail_label = QLabel("")
-        self.queue_detail_label.setStyleSheet("color: #888; font-size: 10px;")
+        self.queue_detail_label.setStyleSheet("color: #64748b; font-size: 11px;")
         progress_layout.addWidget(self.queue_detail_label)
         
         bottom_layout.addWidget(self.queue_progress_frame)
@@ -514,7 +594,7 @@ class ManagerWindow(QMainWindow):
         # Left: Folder tree
         left_panel = QVBoxLayout()
         folder_label = QLabel("📁 모델 폴더")
-        folder_label.setStyleSheet("color: #7dcfff; font-size: 14px; font-weight: bold;")
+        folder_label.setStyleSheet("color: #0ea5e9; font-size: 15px; font-weight: bold;")
         left_panel.addWidget(folder_label)
         
         self.folder_tree = QTreeWidget()
@@ -680,6 +760,47 @@ class ManagerWindow(QMainWindow):
         
         layout.addWidget(cache_group)
         
+        # --- Models Path Manager ---
+        path_group = QGroupBox("공유 모델 경로 관리 (여러 ComfyUI 통합용)")
+        path_layout = QVBoxLayout(path_group)
+        
+        self.paths_list = QListWidget()
+        self.paths_list.setStyleSheet(input_style + "QListWidget { padding: 4px; }")
+        
+        extra = read_extra_model_paths()
+        base_folders = set()
+        for mtype, paths in extra.items():
+            for p in paths:
+                parent = os.path.dirname(p).replace("\\", "/")
+                base_folders.add(parent)
+                
+        self.paths_list.addItems(sorted(list(base_folders)))
+        
+        path_layout.addWidget(self.paths_list)
+        
+        path_btn_layout = QHBoxLayout()
+        add_path_btn = QPushButton("➕ 모델 폴더 추가")
+        add_path_btn.setObjectName("mediumBtn")
+        add_path_btn.setStyleSheet("""
+            QPushButton { background: #1a1b26; border: 1px solid #414868; padding: 6px; border-radius: 4px; color: #c0caf5; }
+            QPushButton:hover { background: #24283b; }
+        """)
+        add_path_btn.clicked.connect(self._add_model_path)
+        
+        remove_path_btn = QPushButton("➖ 선택 삭제")
+        remove_path_btn.setObjectName("mediumBtn")
+        remove_path_btn.setStyleSheet("""
+            QPushButton { background: #1a1b26; border: 1px solid #414868; padding: 6px; border-radius: 4px; color: #f7768e; }
+            QPushButton:hover { background: #24283b; }
+        """)
+        remove_path_btn.clicked.connect(self._remove_model_path)
+        
+        path_btn_layout.addWidget(add_path_btn)
+        path_btn_layout.addWidget(remove_path_btn)
+        path_layout.addLayout(path_btn_layout)
+        
+        layout.addWidget(path_group)
+        
         # Save button
         save_btn = QPushButton("💾 설정 저장")
         save_btn.setObjectName("primaryBtn")
@@ -749,6 +870,48 @@ class ManagerWindow(QMainWindow):
         """Clear the NOT_FOUND cache."""
         clear_not_found_cache()
         QMessageBox.information(self, "캐시 초기화", "NOT_FOUND 캐시가 초기화되었습니다.\n다음 검색 시 모든 모델을 다시 찾습니다.")
+
+    def _add_model_path(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "공유 모델 루트 폴더 선택 (checkpoints, loras 등이 있는 상위 폴더)")
+        if not dir_path:
+            return
+            
+        dir_path = dir_path.replace("\\", "/")
+        
+        for i in range(self.paths_list.count()):
+            if self.paths_list.item(i).text() == dir_path:
+                QMessageBox.warning(self, "중복", "이미 등록된 경로입니다.")
+                return
+                
+        self.paths_list.addItem(dir_path)
+        self._apply_model_paths_from_list()
+
+    def _remove_model_path(self):
+        selected = self.paths_list.selectedItems()
+        if not selected:
+            return
+        for item in selected:
+            self.paths_list.takeItem(self.paths_list.row(item))
+        self._apply_model_paths_from_list()
+        
+    def _apply_model_paths_from_list(self):
+        base_folders = []
+        for i in range(self.paths_list.count()):
+            base_folders.append(self.paths_list.item(i).text())
+            
+        paths_dict = {}
+        standard_types = ['checkpoints', 'loras', 'controlnet', 'vae', 'clip', 'clip_vision', 'unet', 'upscale_models', 'embeddings', 'animatediff_models', 'ipadapter']
+        
+        for base in base_folders:
+            for mtype in standard_types:
+                full_p = os.path.join(base, mtype).replace("\\", "/")
+                paths_dict.setdefault(mtype, []).append(full_p)
+                
+        if write_extra_model_paths(paths_dict):
+            QMessageBox.information(self, "경로 업데이트", "공유 모델 경로가 업데이트 되었습니다.\n새 경로의 모델들은 다음에 앱을 시작할 때 완전히 반영됩니다.")
+            self._refresh_model_browser()
+        else:
+            QMessageBox.warning(self, "오류", "extra_model_paths.yaml 저장에 실패했습니다.")
     
     def _on_main_tab_changed(self, index):
         """Handle main tab change. Lazy-load model browser on first visit."""
@@ -933,7 +1096,13 @@ class ManagerWindow(QMainWindow):
         
         layout.addStretch()
         
-        self.run_btn = QPushButton("Run ComfyUI")
+        self.install_btn = QPushButton("📥 Install ComfyUI")
+        self.install_btn.setObjectName("installBtn")
+        self.install_btn.clicked.connect(self.handle_install_action)
+        self.install_btn.hide()
+        layout.addWidget(self.install_btn)
+        
+        self.run_btn = QPushButton("▶️ Run ComfyUI")
         self.run_btn.setObjectName("primaryBtn")
         self.run_btn.clicked.connect(self.handle_comfy_action)
         self.run_btn.setEnabled(False)
@@ -944,139 +1113,159 @@ class ManagerWindow(QMainWindow):
     def _get_stylesheet(self):
         return """
             QMainWindow {
-                background-color: #2b2b2b;
+                background-color: #f3f4f6;
             }
             QWidget {
-                color: #e0e0e0;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                color: #1e293b;
+                font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
             }
             #mainContentArea, QScrollArea, QScrollArea > QWidget > QWidget {
-                background-color: #2b2b2b;
+                background-color: #f3f4f6;
                 border: none;
             }
             /* Flat Tab Styling */
             QTabWidget::pane {
-                border-top: 1px solid #444444;
-                background-color: #2b2b2b;
+                border-top: 2px solid #e2e8f0;
+                background-color: #ffffff;
             }
             QTabBar::tab {
-                background-color: #2b2b2b;
-                color: #a0a0a0;
-                padding: 12px 24px;
+                background-color: transparent;
+                color: #64748b;
+                padding: 14px 28px;
                 border: none;
-                font-size: 14px;
-                font-weight: 600;
+                font-size: 15px;
+                font-weight: bold;
+                margin-right: 4px;
             }
             QTabBar::tab:hover {
-                color: #ffffff;
+                background-color: #f1f5f9;
+                color: #1e293b;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
             }
             QTabBar::tab:selected {
-                color: #10b981;
-                border-bottom: 2px solid #10b981;
+                background-color: #ffffff;
+                color: #0d9488;
+                border: 2px solid #e2e8f0;
+                border-bottom: 2px solid #ffffff;
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
             }
             
             #headerFrame {
-                background-color: #2b2b2b;
-                border-bottom: 1px solid #444444;
+                background-color: #ffffff;
+                border-bottom: 1px solid #e2e8f0;
             }
-            #titleLabel { color: #ffffff; font-size: 24px; font-weight: bold; }
-            #systemInfo { color: #a0a0a0; font-size: 13px; font-weight: 500; }
+            #titleLabel { color: #0f172a; font-size: 26px; font-weight: 800; }
+            #systemInfo { color: #64748b; font-size: 13px; font-weight: 600; }
             
             #startupFrame {
-                background-color: #333333;
-                border: 1px solid #444444;
-                border-radius: 8px;
+                background-color: #ffffff;
+                border: 1px solid #e2e8f0;
+                border-radius: 16px;
             }
-            #startupLabel { color: #10b981; font-size: 15px; font-weight: bold; }
+            #startupLabel { color: #0d9488; font-size: 15px; font-weight: bold; }
             #startupProgress {
-                background: #222222; border: none; border-radius: 4px; height: 6px;
+                background: #f1f5f9; border: none; border-radius: 6px; height: 8px;
             }
             #startupProgress::chunk {
-                background-color: #10b981;
-                border-radius: 4px;
+                background-color: #0d9488;
+                border-radius: 6px;
             }
             
             QGroupBox {
-                color: #ffffff; font-size: 14px; font-weight: bold;
-                border: 1px solid #444444; border-radius: 8px;
-                margin-top: 20px; padding-top: 20px;
-                background-color: #333333;
+                color: #1e293b; font-size: 15px; font-weight: bold;
+                border: 1px solid #e2e8f0; border-radius: 16px;
+                margin-top: 24px; padding-top: 24px;
+                background-color: #ffffff;
             }
             QGroupBox::title {
-                subcontrol-origin: margin; left: 16px; padding: 0 4px; color: #10b981;
+                subcontrol-origin: margin; left: 16px; padding: 0 4px; color: #0d9488;
             }
             /* QTableWidget Styling for Easy Install Look */
             QTableWidget {
-                background-color: #333333;
-                color: #e0e0e0;
-                border: 1px solid #444444;
-                border-radius: 6px;
-                gridline-color: #444444;
+                background-color: #ffffff;
+                color: #334155;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                gridline-color: transparent;
                 font-size: 13px;
                 outline: none;
             }
             QTableWidget::item {
-                padding: 8px 12px;
-                border-bottom: 1px solid #444444;
+                padding: 12px 16px;
+                border-bottom: 1px solid #f1f5f9;
             }
             QTableWidget::item:selected {
-                background-color: #444444;
-                color: #ffffff;
+                background-color: #f0fdfa;
+                color: #0f172a;
             }
             QHeaderView::section {
-                background-color: #222222;
-                color: #a0a0a0;
-                padding: 12px;
+                background-color: #f8fafc;
+                color: #64748b;
+                padding: 16px;
                 border: none;
+                border-bottom: 1px solid #e2e8f0;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 13px;
                 text-align: left;
             }
             
             QListWidget, QTreeWidget {
-                background-color: #333333; color: #e0e0e0;
-                border: 1px solid #444444; border-radius: 6px; font-size: 13px; outline: none;
+                background-color: #ffffff; color: #334155;
+                border: 1px solid #e2e8f0; border-radius: 12px; font-size: 13px; outline: none;
             }
-            QTreeWidget::item { padding: 8px 6px; border-bottom: 1px solid #444444; }
+            QTreeWidget::item { padding: 10px 8px; border-bottom: 1px solid #f1f5f9; }
             QTreeWidget::item:selected {
-                background-color: #444444; color: #ffffff;
+                background-color: #f0fdfa; color: #0f172a;
+                border-radius: 6px;
             }
             
             QPushButton { 
-                border: none; border-radius: 6px; padding: 6px 16px; 
-                font-size: 13px; font-weight: bold;
+                border: none; border-radius: 16px; padding: 8px 16px; 
+                font-size: 14px; font-weight: bold;
             }
             
+            /* Primary Run Button */
             #primaryBtn {
-                background-color: #eab308; color: #1a1a1a; font-size: 14px; padding: 10px 24px;
+                background-color: #3b82f6; color: #ffffff; font-size: 15px; padding: 10px 24px;
+                border-radius: 20px;
             }
-            #primaryBtn:hover { background-color: #facc15; }
-            #primaryBtn:pressed { background-color: #ca8a04; }
-            #primaryBtn:disabled { background-color: #444444; color: #888888; }
+            #primaryBtn:hover { background-color: #2563eb; }
+            #primaryBtn:pressed { background-color: #1d4ed8; }
+            #primaryBtn:disabled { background-color: #e2e8f0; color: #94a3b8; }
+
+            /* Install Button */
+            #installBtn {
+                background-color: #10b981; color: #ffffff; font-size: 15px; padding: 10px 24px;
+                border-radius: 20px;
+            }
+            #installBtn:hover { background-color: #059669; }
+            #installBtn:pressed { background-color: #047857; }
             
-            #secondaryBtn { background-color: #444444; color: #e0e0e0; }
-            #secondaryBtn:hover { background-color: #555555; }
+            #secondaryBtn { background-color: #f1f5f9; color: #475569; }
+            #secondaryBtn:hover { background-color: #e2e8f0; }
             
-            #smallBtn { background-color: #444444; color: #d0d0d0; padding: 6px 12px; font-size: 12px; }
-            #smallBtn:hover { background-color: #555555; color: #ffffff; }
+            #smallBtn { background-color: #f1f5f9; color: #64748b; padding: 6px 14px; font-size: 12px; border-radius: 14px; }
+            #smallBtn:hover { background-color: #e2e8f0; color: #1e293b; }
             
-            /* Yellow Action Table Button */
+            /* Action Table Button */
             #tableActionBtn {
-                background-color: #eab308; color: #1a1a1a; border-radius: 4px; padding: 6px 12px; 
+                background-color: #3b82f6; color: #ffffff; border-radius: 12px; padding: 8px 16px; 
                 font-weight: bold; font-size: 12px;
             }
-            #tableActionBtn:hover { background-color: #facc15; }
-            #tableActionBtn:pressed { background-color: #ca8a04; }
+            #tableActionBtn:hover { background-color: #2563eb; }
+            #tableActionBtn:pressed { background-color: #1d4ed8; }
             
             QLineEdit, QComboBox {
-                background-color: #222222;
-                color: #ffffff;
-                border: 1px solid #444444;
-                border-radius: 6px;
-                padding: 8px 12px;
+                background-color: #ffffff;
+                color: #1e293b;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+                padding: 10px 14px;
                 font-size: 13px;
             }
-            QLineEdit:focus, QComboBox:focus { border-color: #eab308; outline: none; }
+            QLineEdit:focus, QComboBox:focus { border-color: #3b82f6; outline: none; }
             QComboBox::drop-down { border: none; }
         """
         
@@ -1088,9 +1277,9 @@ class ManagerWindow(QMainWindow):
             
         menu = QMenu(self.nodes_tree)
         menu.setStyleSheet("""
-            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
-            QMenu::item { padding: 5px 20px; }
-            QMenu::item:selected { background-color: #5865f2; color: white; }
+            QMenu { background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; }
+            QMenu::item { padding: 6px 24px; font-weight: bold; }
+            QMenu::item:selected { background-color: #f1f5f9; color: #0f172a; }
         """)
         
         copy_action = QAction("Copy Name", self)
@@ -1107,9 +1296,9 @@ class ManagerWindow(QMainWindow):
             
         menu = QMenu(self.models_tree)
         menu.setStyleSheet("""
-            QMenu { background-color: #2a2a3e; color: #e0e0e0; border: 1px solid #3a3a5e; }
-            QMenu::item { padding: 5px 20px; }
-            QMenu::item:selected { background-color: #5865f2; color: white; }
+            QMenu { background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; }
+            QMenu::item { padding: 6px 24px; font-weight: bold; }
+            QMenu::item:selected { background-color: #f1f5f9; color: #0f172a; }
         """)
         
         copy_action = QAction("Copy Name", self)
@@ -1284,7 +1473,7 @@ class ManagerWindow(QMainWindow):
             self.models_table.insertRow(i)
             
             # Simple check if exists
-            model_path = os.path.join(MODELS_PATH, folder, name)
+            model_path = os.path.join(get_models_path(), folder, name)
             is_installed = os.path.exists(model_path)
             
             # Column 0: Filename
@@ -1492,15 +1681,15 @@ class ManagerWindow(QMainWindow):
             info_lines.append(f"<b>출처:</b> {method}")
             
         if model["installed"]:
-            self.detail_status.setText("<span style='color:#00ffcc;'>✓ 시스템에 설치됨</span>")
+            self.detail_status.setText("<span style='color:#10b981; font-weight: bold;'>✓ 시스템에 설치됨</span>")
             self.source_widget.hide()
             self.actions_widget.hide()
         elif url:
-            self.detail_status.setText("<span style='color:#7aa2f7;'>⏳ 다운로드 대기 중</span>")
+            self.detail_status.setText("<span style='color:#3b82f6; font-weight: bold;'>⏳ 다운로드 대기 중</span>")
             self.source_widget.hide()
             self.actions_widget.hide()
         else:
-            self.detail_status.setText("<span style='color:#ffd93d;'>❓ 소스 알 수 없음</span>")
+            self.detail_status.setText("<span style='color:#f59e0b; font-weight: bold;'>❓ 소스 알 수 없음</span>")
             self.source_input.clear()
             self.source_widget.show()
             self.actions_widget.show()
@@ -1722,44 +1911,43 @@ class ManagerWindow(QMainWindow):
         
         # UI toggling for Install vs Run
         if not status.get("comfy_installed", False):
-            self.run_btn.setText("Install ComfyUI")
-            self.run_btn.setStyleSheet("""
-                #primaryBtn {
-                    background-color: #10b981; color: #ffffff;
-                }
-                #primaryBtn:hover { background-color: #059669; }
-                #primaryBtn:pressed { background-color: #047857; }
-            """)
+            self.install_btn.show()
+            self.run_btn.hide()
+            self.run_btn.setEnabled(False)
         else:
-            self.run_btn.setText("Run ComfyUI")
-            self.run_btn.setStyleSheet("") # Revert to default stylesheet class
+            self.install_btn.hide()
+            self.run_btn.show()
+            self.run_btn.setEnabled(True)
     
-    def handle_comfy_action(self):
-        """Handle Run or Install comfyUI action."""
-        if self.run_btn.text() == "Install ComfyUI":
-            reply = QMessageBox.question(
-                self, "ComfyUI 설치",
-                "ComfyUI 코어를 설치하시겠습니까?\n이 컴퓨터에 Git이 설치되어 있어야 합니다.",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                self.run_btn.setEnabled(False)
-                self.run_btn.setText("Installing...")
-                QApplication.processEvents()
-                
-                success, msg = install_comfyui()
-                if success:
-                    QMessageBox.information(self, "설치 완료", "ComfyUI가 성공적으로 설치되었습니다!\n\n앱을 재시작해주세요.")
-                    self.refresh_system_status()
-                else:
-                    QMessageBox.warning(self, "설치 실패", f"설치 중 오류가 발생했습니다:\n{msg}")
-                    self.run_btn.setText("Install ComfyUI")
-                    self.run_btn.setEnabled(True)
-        else:
-            if run_comfyui():
-                QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
+    def handle_install_action(self):
+        """Handle ComfyUI Core Installation."""
+        reply = QMessageBox.question(
+            self, "ComfyUI 설치",
+            "ComfyUI 코어를 설치하시겠습니까?\n이 컴퓨터에 Git이 설치되어 있어야 합니다.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.install_btn.setEnabled(False)
+            self.install_btn.setText("Installing...")
+            QApplication.processEvents()
+            
+            success, msg = install_comfyui()
+            if success:
+                QMessageBox.information(self, "설치 완료", "ComfyUI가 성공적으로 설치되었습니다!\n\n앱을 재시작해주세요.")
+                self.refresh_system_status()
+                self.install_btn.setText("📥 Install ComfyUI")
+                self.install_btn.setEnabled(True)
             else:
-                QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
+                QMessageBox.warning(self, "설치 실패", f"설치 중 오류가 발생했습니다:\n{msg}")
+                self.install_btn.setText("📥 Install ComfyUI")
+                self.install_btn.setEnabled(True)
+
+    def handle_comfy_action(self):
+        """Handle Run ComfyUI."""
+        if run_comfyui():
+            QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
+        else:
+            QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
     
     def refresh_system_status(self):
         """Refresh system status panel with current info."""
@@ -1768,18 +1956,18 @@ class ManagerWindow(QMainWindow):
             comfy_info = check_comfyui_version()
             if comfy_info["error"]:
                 self.comfy_status.setText(f"⚠️ {comfy_info['error']}")
-                self.comfy_status.setStyleSheet("color: #ff6b6b;")
+                self.comfy_status.setStyleSheet("color: #ef4444; font-weight: bold;")
             elif comfy_info["update_available"]:
                 self.comfy_status.setText(f"⚠️ {comfy_info['commits_behind']}개 커밋 뒤처짐")
-                self.comfy_status.setStyleSheet("color: #ffcc00;")
+                self.comfy_status.setStyleSheet("color: #eab308; font-weight: bold;")
                 self.comfy_update_btn.show()
             else:
                 self.comfy_status.setText(f"✅ 최신 ({comfy_info['current_commit']})")
-                self.comfy_status.setStyleSheet("color: #4CAF50;")
+                self.comfy_status.setStyleSheet("color: #10b981; font-weight: bold;")
                 self.comfy_update_btn.hide()
         except Exception as e:
             self.comfy_status.setText(f"❌ 오류: {e}")
-            self.comfy_status.setStyleSheet("color: #ff6b6b;")
+            self.comfy_status.setStyleSheet("color: #ef4444; font-weight: bold;")
         
         # Check Custom Nodes
         try:
@@ -1789,19 +1977,19 @@ class ManagerWindow(QMainWindow):
             
             if updatable > 0:
                 self.nodes_status.setText(f"⚠️ {total}개 중 {updatable}개 업데이트 가능")
-                self.nodes_status.setStyleSheet("color: #ffcc00;")
+                self.nodes_status.setStyleSheet("color: #eab308; font-weight: bold;")
                 self.nodes_update_btn.show()
             else:
                 self.nodes_status.setText(f"✅ {total}개 모두 최신")
-                self.nodes_status.setStyleSheet("color: #4CAF50;")
+                self.nodes_status.setStyleSheet("color: #10b981; font-weight: bold;")
                 self.nodes_update_btn.hide()
         except Exception as e:
             self.nodes_status.setText(f"❌ 오류: {e}")
-            self.nodes_status.setStyleSheet("color: #ff6b6b;")
+            self.nodes_status.setStyleSheet("color: #ef4444; font-weight: bold;")
         
         # Models count
         self.models_status.setText(f"✅ {len(MODEL_DB)}개 등록됨")
-        self.models_status.setStyleSheet("color: #4CAF50;")
+        self.models_status.setStyleSheet("color: #10b981; font-weight: bold;")
     
     def handle_comfy_update(self):
         """Handle ComfyUI update button click."""
