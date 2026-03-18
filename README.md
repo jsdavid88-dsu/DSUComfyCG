@@ -229,10 +229,9 @@ DSU_Manager.bat
 ```
 
 <details>
-<summary>📷 스크린샷 보기</summary>
+<summary>📷 상세 화면 보기</summary>
 
-![Workflow Validator](docs/images/workflow_validator.png)
-*워크플로우를 로드하면 필요한 노드와 모델이 자동 분석됩니다*
+*(통합 UI 위에서 워크플로우를 로드하면 필요한 노드와 모델이 자동 분석됩니다)*
 
 </details>
 
