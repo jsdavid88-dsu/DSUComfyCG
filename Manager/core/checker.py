@@ -1441,8 +1441,24 @@ def install_comfyui(progress_cb=None):
         
         if process.returncode == 0:
             if progress_cb:
-                progress_cb("ComfyUI repository cloned successfully.")
-            return True, "Successfully installed ComfyUI."
+                progress_cb("ComfyUI repository cloned successfully. Copying default workflows...")
+                
+            import shutil
+            source_workflows = os.path.join(BASE_DIR, "workflows")
+            target_workflows = os.path.join(get_comfy_path(), "user", "default", "workflows")
+            if os.path.exists(source_workflows):
+                try:
+                    os.makedirs(target_workflows, exist_ok=True)
+                    for item in os.listdir(source_workflows):
+                        if item.endswith(".json"):
+                            src = os.path.join(source_workflows, item)
+                            dst = os.path.join(target_workflows, item)
+                            shutil.copy2(src, dst)
+                    logger.info(f"Copied built-in workflows to {target_workflows}")
+                except Exception as cw_err:
+                    logger.error(f"Failed to copy workflows: {cw_err}")
+                
+            return True, "Successfully installed ComfyUI with default workflows."
         else:
             err_msg = f"Git clone failed:\n{stderr}"
             logger.error(err_msg)

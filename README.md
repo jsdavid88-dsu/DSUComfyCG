@@ -40,11 +40,10 @@
 ```powershell
 git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
 cd DSUComfyCG
-DSUComfyCG-Install.bat
-Helper\run_comfy.bat
+DSU_Manager.bat
 ```
 
-Then open your browser and go to `http://localhost:8188`
+The manager UI will open automatically. Click **Install** to set up ComfyUI and download the required models. Then, click **Run ComfyUI**.
 
 <img src="docs/images/tabular_ui_preview.png" alt="DSUComfyCG Manager UI" width="800">
 
@@ -84,20 +83,20 @@ Or download ZIP from [Releases](https://github.com/jsdavid88-dsu/DSUComfyCG/rele
 #### 2. Run Installation Script
 
 ```powershell
-DSUComfyCG-Install.bat
+DSU_Manager.bat
 ```
 
-What gets installed:
-- ✅ Portable Python 3.12
-- ✅ PyTorch 2.5.1 + CUDA 12.8
-- ✅ ComfyUI Core
-- ✅ ComfyUI-Manager
-- ✅ VideoHelperSuite, IPAdapter, ControlNet and other essential nodes
+What gets installed automatically on first run:
+- ✅ Python Virtual Environment (`.venv`) for isolated Manager UI
+- ✅ ComfyUI Core (via internal Git Clone when clicking `Install`)
+- ✅ Portable Python 3.12 (via internal UI download)
+- ✅ PyTorch 2.5+ & Essential Custom Nodes
+- ✅ **Built-in Workflows Automatically Copied**
+- ✅ **Advanced Addons (SageAttention, Nunchaku) available natively via UI**
 
 #### 3. Run ComfyUI
 
-```powershell
-Helper\run_comfy.bat
+Inside the Application Manager, click the **▶️ Run ComfyUI** button based on your active environment!
 ```
 
 Open your browser and go to `http://localhost:8188`
@@ -215,7 +214,7 @@ DSUComfyCG Manager는 워크플로우의 의존성을 분석하고 자동으로 
 ### 매니저 실행
 
 ```powershell
-Manager\run_manager.bat
+DSU_Manager.bat
 ```
 
 ### 주요 기능
@@ -279,14 +278,11 @@ Manager\run_manager.bat
 
 ```
 DSUComfyCG/
-├── DSUComfyCG-Install.bat     # 설치 스크립트
-├── Helper/
-│   ├── run_comfy.bat          # ComfyUI 실행
-│   └── scan_and_install.py    # 자동 의존성 스캐너
+├── DSU_Manager.bat            # 통합 설치 및 실행 매니저
+├── DSUComfyCG-Install.bat.disabled # (구버전 설치 스크립트)
 ├── Manager/
-│   ├── run_manager.bat        # 매니저 GUI 실행
 │   ├── core/
-│   │   └── checker.py         # 의존성 검사 엔진
+│   │   └── checker.py         # 의존성 검사 커널 엔진
 │   ├── data/
 │   │   ├── extension-node-map.json  # 노드 DB
 │   │   └── model-list.json          # 모델 DB

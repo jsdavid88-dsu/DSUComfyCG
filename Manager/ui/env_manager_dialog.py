@@ -171,10 +171,19 @@ class EnvManagerDialog(QDialog):
             """)
             del_btn.clicked.connect(lambda _, eid=env_id: self._delete_env_inline(eid))
             
+            # 5. Advanced Addons
+            addons_btn = QPushButton("Advanced ⚙️")
+            addons_btn.setStyleSheet("""
+                QPushButton { background-color: #f3f4f6; color: #475569; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 12px; font-weight: bold; font-size: 12px; }
+                QPushButton:hover { background-color: #e2e8f0; }
+            """)
+            addons_btn.clicked.connect(lambda _, eid=env_id: self._open_addons_dialog(eid))
+
             action_layout.addWidget(install_btn)
             action_layout.addWidget(open_btn)
             action_layout.addWidget(dup_btn)
             action_layout.addWidget(del_btn)
+            action_layout.addWidget(addons_btn)
             action_layout.addStretch()
             
             empty_item = QTableWidgetItem()
@@ -247,6 +256,143 @@ class EnvManagerDialog(QDialog):
             self.refresh_table()
         else:
             QMessageBox.warning(self, "Failed", msg)
+
+    def _open_addons_dialog(self, env_id):
+        dialog = AdvancedAddonsDialog(env_id, self)
+        dialog.exec()
+
+class AdvancedAddonsDialog(QDialog):
+    def __init__(self, env_id, parent=None):
+        super().__init__(parent)
+        self.env_id = env_id
+        self.setWindowTitle(f"Advanced Add-ons - {env_id}")
+        self.setMinimumWidth(500)
+        self._setup_ui()
+        
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel(f"Manage High-Performance Backends\nEnvironment: {self.env_id}")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e293b;")
+        layout.addWidget(title)
+        
+        desc = QLabel("These add-ons require Python 3.12 and PyTorch 2.8+ (cu128).")
+        desc.setStyleSheet("color: #64748b; margin-bottom: 10px;")
+        layout.addWidget(desc)
+
+        # Container for the add-on rows
+        addons_container = QWidget()
+        v_layout = QVBoxLayout(addons_container)
+        v_layout.setSpacing(10)
+        
+        addons = [
+            ("sageattention", "SageAttention (v2.2.0 & v3)", "Replaces standard attention backend, optimizing speed."),
+            ("flashattention", "FlashAttention (v2.8.3)", "Replaces standard attention for massive speedups."),
+            ("nunchaku", "Nunchaku", "Essential for certain customized rendering workflows.")
+        ]
+        
+        for addon_id, name, description in addons:
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(10, 10, 10, 10)
+            row_widget.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;")
+            
+            text_layout = QVBoxLayout()
+            name_lbl = QLabel(name)
+            name_lbl.setStyleSheet("font-weight: bold; font-size: 14px; color: #0f172a; border: none;")
+            desc_lbl = QLabel(description)
+            desc_lbl.setStyleSheet("color: #475569; font-size: 12px; border: none;")
+            desc_lbl.setWordWrap(True)
+            text_layout.addWidget(name_lbl)
+            text_layout.addWidget(desc_lbl)
+            
+            install_btn = QPushButton("Install")
+            install_btn.setStyleSheet("""
+                QPushButton { background-color: #3b82f6; color: white; border-radius: 6px; padding: 6px 15px; font-weight: bold; }
+                QPushButton:hover { background-color: #2563eb; }
+                QPushButton:disabled { background-color: #94a3b8; }
+            """)
+            install_btn.setFixedWidth(100)
+            install_btn.clicked.connect(lambda _, aid=addon_id, btn=install_btn: self._install_addon(aid, btn))
+            
+            row_layout.addLayout(text_layout)
+            row_layout.addWidget(install_btn, alignment=Qt.AlignRight | Qt.AlignVCenter)
+            v_layout.addWidget(row_widget)
+            
+        layout.addWidget(addons_container)
+        
+        # Log terminal
+        self.log_output = QTextEdit()
+        self.log_output.setReadOnly(True)
+        self.log_output.setFixedHeight(120)
+        self.log_output.setStyleSheet("background-color: #1e293b; color: #10b981; font-family: Consolas, monospace; font-size: 11px; padding: 5px;")
+        layout.addWidget(self.log_output)
+        
+        # Close button
+        btn_layout = QHBoxLayout()
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet("padding: 8px 20px; border-radius: 6px; background-color: #e2e8f0; font-weight: bold;")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addStretch()
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+
+    def _install_addon(self, addon_id, btn):
+        from core.checker import ENVIRONMENTS
+        env_data = ENVIRONMENTS.get(self.env_id)
+        if not env_data:
+            QMessageBox.warning(self, "Error", "Environment not found.")
+            return
+            
+        comfy_path = env_data.get("path", "")
+        if not os.path.exists(comfy_path):
+            QMessageBox.warning(self, "Error", "ComfyUI is not installed in this environment yet.")
+            return
+            
+        python_exe = os.path.join(comfy_path, "..", "python_embeded", "python.exe")
+        if not os.path.exists(python_exe):
+            # Fallback for standard environments
+            python_exe = os.path.join(comfy_path, "venv", "Scripts", "python.exe")
+            
+        btn.setEnabled(False)
+        btn.setText("Installing...")
+        self.log_output.clear()
+        self.log_output.append(f"Starting installation for {addon_id}...\nTarget: {python_exe}\n")
+        
+        # Run installation in a separate thread so UI doesn't freeze
+        from PySide6.QtCore import QThread, Signal
+        
+        class InstallWorker(QThread):
+            progress_signal = Signal(str)
+            finished_signal = Signal(bool, str)
+            
+            def __init__(self, aid, py_path, c_path):
+                super().__init__()
+                self.aid = aid
+                self.py_path = py_path
+                self.c_path = c_path
+                
+            def run(self):
+                from core.addons_installer import install_addon
+                def _cb(msg):
+                    self.progress_signal.emit(msg)
+                success, msg = install_addon(self.aid, self.py_path, self.c_path, callback=_cb)
+                self.finished_signal.emit(success, msg)
+                
+        self.worker = InstallWorker(addon_id, python_exe, comfy_path)
+        self.worker.progress_signal.connect(self.log_output.append)
+        
+        def _on_finish(success, msg):
+            self.log_output.append(f"\nResult: {msg}")
+            btn.setText("Done" if success else "Failed")
+            if not success:
+                btn.setEnabled(True)
+                btn.setText("Retry")
+                
+        self.worker.finished_signal.connect(_on_finish)
+        self.worker.start()
 
     def _on_item_changed(self, item):
         column_map = {1: "name", 2: "type", 4: "memo"}

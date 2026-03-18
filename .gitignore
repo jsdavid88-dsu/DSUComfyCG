@@ -23,3 +23,8 @@ DSUComfyCG/processed_workflows.txt
 
 # Logs
 *.log
+
+# Reference Materials (Legacy tools and source repos)
+_ref_*
+temp_checker.py
+Manager/capture_screenshot.py
