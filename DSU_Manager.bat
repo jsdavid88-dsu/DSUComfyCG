@@ -5,6 +5,11 @@ echo   DSUComfyCG - Starting Manager Environment
 echo ========================================================
 echo.
 
+:: Auto-Update from GitHub
+echo [INFO] Checking for updates from GitHub...
+git pull
+echo.
+
 :: Check for Python 3.10+
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
