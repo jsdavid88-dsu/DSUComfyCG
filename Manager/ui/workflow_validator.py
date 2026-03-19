@@ -6,7 +6,7 @@ DSUComfyCG Manager - Workflow Validator Dialog
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFrame, QScrollArea, QWidget, QTreeWidget,
-    QTreeWidgetItem, QHeaderView, QMessageBox, QMenu
+    QTreeWidgetItem, QHeaderView, QMessageBox, QMenu, QApplication
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QAction, QCursor
@@ -308,9 +308,6 @@ class WorkflowValidatorDialog(QDialog):
         )
         self.all_resolved = True
         self.accept()
-    
-        
-        menu.exec(self.resolved_tree.viewport().mapToGlobal(position))
 
     def show_resolved_context_menu(self, position):
         """Show context menu for resolved tree."""

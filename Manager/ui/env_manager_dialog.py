@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit,
     QMessageBox, QComboBox, QInputDialog, QAbstractItemView,
-    QWidget, QMenu
+    QWidget, QMenu, QTextEdit
 )
 from PySide6.QtCore import Qt
 from core.checker import ENVIRONMENTS, ACTIVE_ENV_ID, add_environment, remove_environment, update_environment_memo, BASE_DIR
