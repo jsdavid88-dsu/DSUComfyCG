@@ -196,7 +196,7 @@ class ManagerWindow(QMainWindow):
         self.main_tabs.addTab(model_browser_tab, "Local Browser")
         
         # Page 4: Workflows
-        workflows_tab = QWidget()
+        workflows_tab = self._create_workflows_tab()
         self.main_tabs.addTab(workflows_tab, "Workflows")
         
         # Page 5: Settings
@@ -666,6 +666,71 @@ class ManagerWindow(QMainWindow):
         self._unused_model_names = set()
         
         return widget
+        
+    def _create_workflows_tab(self):
+        """Create the Workflows tab (NEW)."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+        
+        title_layout = QHBoxLayout()
+        title = QLabel("📂 Workflows")
+        title.setStyleSheet("color: #0ea5e9; font-size: 18px; font-weight: bold;")
+        title_layout.addWidget(title)
+        
+        refresh_btn = QPushButton("새로고침")
+        refresh_btn.setStyleSheet("background: #334155; color: white; padding: 5px 15px; border-radius: 6px;")
+        refresh_btn.clicked.connect(self._refresh_workflows_tab)
+        title_layout.addStretch()
+        title_layout.addWidget(refresh_btn)
+        
+        layout.addLayout(title_layout)
+        
+        self.workflow_list_table = QTableWidget(0, 2)
+        self.workflow_list_table.setHorizontalHeaderLabels(["Filename", "Action"])
+        self.workflow_list_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.workflow_list_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.workflow_list_table.setColumnWidth(1, 150)
+        self.workflow_list_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.workflow_list_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.workflow_list_table.verticalHeader().setDefaultSectionSize(40)
+        self.workflow_list_table.verticalHeader().setVisible(False)
+        self.workflow_list_table.setShowGrid(False)
+        
+        layout.addWidget(self.workflow_list_table)
+        self._refresh_workflows_tab()
+        
+        return widget
+        
+    def _refresh_workflows_tab(self):
+        # Only populate if the table exists to avoid startup timing issues
+        if not hasattr(self, 'workflow_list_table'): return
+        self.workflow_list_table.setRowCount(0)
+        workflows = scan_workflows()
+        for wf in workflows:
+            row = self.workflow_list_table.rowCount()
+            self.workflow_list_table.insertRow(row)
+            
+            name_item = QTableWidgetItem(wf)
+            name_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.workflow_list_table.setItem(row, 0, name_item)
+            
+            btn = QPushButton("🔍 의존성 검증")
+            btn.setStyleSheet("background: #10b981; color: white; font-weight: bold; border-radius: 4px; padding: 6px;")
+            btn.clicked.connect(lambda checked=False, filename=wf: self._validate_workflow(filename))
+            
+            btn_widget = QWidget()
+            btn_layout = QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(4, 4, 4, 4)
+            btn_layout.addWidget(btn)
+            self.workflow_list_table.setCellWidget(row, 1, btn_widget)
+            
+    def _validate_workflow(self, filename):
+        dialog = WorkflowValidatorDialog(filename, self)
+        if dialog.exec():
+            QMessageBox.information(self, "검증 완료", f"{filename}의 모든 모델/노드 URL이 등록 대기열에 추가되었습니다.\n[새로고침]을 눌러 다운로드를 진행하세요.")
+            self.refresh_all(scan_workflows=True)
     
     def _create_settings_tab(self):
         """Create the Settings tab (NEW)."""
