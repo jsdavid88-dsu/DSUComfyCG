@@ -261,6 +261,35 @@ class EnvManagerDialog(QDialog):
         dialog = AdvancedAddonsDialog(env_id, self)
         dialog.exec()
 
+    def _add_environment(self):
+        env_id, ok = QInputDialog.getText(self, "New Environment", "Enter a unique ID (e.g., env_production_02):")
+        if not ok or not env_id.strip():
+            return
+            
+        name, ok = QInputDialog.getText(self, "New Environment", "Enter a display name:")
+        if not ok or not name.strip():
+            return
+            
+        type_desc, ok = QInputDialog.getItem(self, "Environment Type", "Select type:", ["sandbox", "production"], 0, False)
+        if not ok:
+            return
+            
+        memo, ok = QInputDialog.getText(self, "Memo", "Enter a brief memo (optional):")
+        if not ok:
+            return
+            
+        from core.checker import add_environment, BASE_DIR
+        import os
+        
+        target_path = os.path.join(BASE_DIR, "envs", env_id.strip()).replace("\\", "/")
+        
+        success, msg = add_environment(env_id.strip(), name.strip(), type_desc, target_path, memo.strip())
+        if success:
+            QMessageBox.information(self, "Success", f"Environment '{name}' added.\nClick 'Install' next to it to download ComfyUI.")
+            self.refresh_table()
+        else:
+            QMessageBox.warning(self, "Error", msg)
+
 class AdvancedAddonsDialog(QDialog):
     def __init__(self, env_id, parent=None):
         super().__init__(parent)
