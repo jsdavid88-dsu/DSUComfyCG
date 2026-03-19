@@ -247,6 +247,21 @@ class EnvManagerDialog(QDialog):
                 self.refresh_table()
             else:
                 QMessageBox.warning(self, "Error", msg)
+    def _on_item_changed(self, item):
+        row = item.row()
+        col = item.column()
+        env_id_item = self.table.item(row, 0)
+        if not env_id_item:
+            return
+        env_id = env_id_item.text()
+        
+        from core.checker import update_environment_field, update_environment_memo
+        if col == 1:
+            update_environment_field(env_id, "name", item.text())
+        elif col == 2:
+            update_environment_field(env_id, "type", item.text())
+        elif col == 4:
+            update_environment_memo(env_id, item.text())
 
     def _duplicate_env_action(self, env_id):
         from core.checker import duplicate_environment

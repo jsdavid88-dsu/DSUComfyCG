@@ -1477,12 +1477,8 @@ class ManagerWindow(QMainWindow):
         pass
     
     def refresh_workflows(self):
-        self.workflow_list.clear()
-        workflows = scan_workflows()
-        for wf in workflows:
-            item = QListWidgetItem(wf)
-            item.setData(Qt.UserRole, wf)
-            self.workflow_list.addItem(item)
+        # Delegate to the new Tabular UI workflows table
+        self._refresh_workflows_tab()
     
     def sync_workflows_ui(self):
         self.status_bar.showMessage("Syncing workflows...")
