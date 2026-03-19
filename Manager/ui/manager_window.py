@@ -1528,13 +1528,33 @@ class ManagerWindow(QMainWindow):
     def populate_all_models_table(self):
         self.models_table.setRowCount(0)
         
-        total = len(MODEL_DB)
+        from core.checker import parse_workflow
+        
+        # 1. Collect all models from MODEL_DB
+        combined_models = {}
+        for name, url in MODEL_DB.items():
+            if isinstance(url, dict):
+                url_str = url.get("url", "")
+            else:
+                url_str = url
+            combined_models[name] = {"url": url_str, "folder": guess_model_folder(name)}
+            
+        # 2. Add all models used in all local workflows
+        workflows = scan_workflows()
+        for wf in workflows:
+            _, wf_models = parse_workflow(wf)
+            for m in wf_models:
+                if m not in combined_models:
+                    combined_models[m] = {"url": "", "folder": guess_model_folder(m)}
+                    
+        total = len(combined_models)
         existing = 0
         missing = 0
         downloadable = 0
         
-        for i, (name, url) in enumerate(MODEL_DB.items()):
-            folder = guess_model_folder(name)
+        for i, (name, data) in enumerate(combined_models.items()):
+            folder = data["folder"]
+            url = data["url"]
             self.models_table.insertRow(i)
             
             # Simple check if exists
