@@ -35,13 +35,21 @@
 | 🎨 **Deep Space UI** | Dark theme optimized for VFX artists |
 | 🧳 **Portable** | Move the entire installation via USB |
 
-### Quick Start
+### Quick Start (Nothing Pre-installed? No Problem!)
 
+**Option A — With Git:**
 ```powershell
 git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
 cd DSUComfyCG
 DSU_Manager.bat
 ```
+
+**Option B — Without Git (ZIP download):**
+1. [Download ZIP](https://github.com/jsdavid88-dsu/DSUComfyCG/archive/refs/heads/main.zip)
+2. Extract to any folder
+3. Double-click `DSU_Manager.bat`
+
+> ⚡ **Python, Git, pip — all auto-installed on first run.** You don't need to install anything manually.
 
 The manager UI will open automatically. Click **Install** to set up ComfyUI and download the required models. Then, click **Run ComfyUI**.
 
@@ -68,6 +76,7 @@ For detailed installation instructions, see [Installation Guide](docs/installati
 - **RAM**: 16GB recommended minimum
 - **Storage**: Minimum 50GB (100GB+ with models)
 - **Internet**: Required for initial setup
+- **Python / Git**: ⚡ **NOT required** — auto-installed if missing
 
 ### Installation Steps
 
@@ -78,21 +87,25 @@ git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
 cd DSUComfyCG
 ```
 
-Or download ZIP from [Releases](https://github.com/jsdavid88-dsu/DSUComfyCG/releases)
+Or download ZIP from [GitHub](https://github.com/jsdavid88-dsu/DSUComfyCG/archive/refs/heads/main.zip)
 
-#### 2. Run Installation Script
+#### 2. Run DSU_Manager.bat
 
 ```powershell
 DSU_Manager.bat
 ```
 
-What gets installed automatically on first run:
-- ✅ Python Virtual Environment (`.venv`) for isolated Manager UI
-- ✅ ComfyUI Core (via internal Git Clone when clicking `Install`)
-- ✅ Portable Python 3.12 (via internal UI download)
+What gets installed **automatically** on first run:
+- ✅ **Git** — MinGit portable (~30MB, if system Git not found)
+- ✅ **Python 3.12** — Embedded portable (~15MB, if system Python not found)
+- ✅ **pip** — Auto-bootstrapped if missing
+- ✅ **PySide6 & requests** — UI dependencies
+- ✅ ComfyUI Core (via Install button in Manager)
 - ✅ PyTorch 2.5+ & Essential Custom Nodes
-- ✅ **Built-in Workflows Automatically Copied**
-- ✅ **Advanced Addons (SageAttention, Nunchaku) available natively via UI**
+- ✅ Built-in Workflows automatically synced
+- ✅ Advanced Addons (SageAttention, Nunchaku) available via UI
+
+> 💡 No admin rights needed. Everything is portable and contained within the project folder.
 
 #### 3. Run ComfyUI
 
