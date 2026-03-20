@@ -5,9 +5,10 @@ echo   DSUComfyCG - Starting Manager Environment
 echo ========================================================
 echo.
 
-:: Auto-Update from GitHub
+:: Auto-Update from GitHub (including reference project submodule)
 echo [INFO] Checking for updates from GitHub...
 git pull 2>nul
+git submodule update --init --recursive 2>nul
 echo.
 
 :: ============================================================
@@ -100,6 +101,16 @@ if exist "Manager\core\__pycache__" rd /s /q "Manager\core\__pycache__" >nul 2>&
 :: Activate venv and install dependencies
 echo [INFO] Installing required UI dependencies...
 call .venv\Scripts\activate.bat
+
+:: Ensure pip is available (handles systems where pip is missing)
+python -m pip --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] pip not found. Bootstrapping pip...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py'"
+    python "%TEMP%\get-pip.py" --no-warn-script-location >nul 2>&1
+    del "%TEMP%\get-pip.py" 2>nul
+)
 python -m pip install --upgrade pip >nul 2>&1
 python -m pip install PySide6 requests --no-warn-script-location >nul 2>&1
 
