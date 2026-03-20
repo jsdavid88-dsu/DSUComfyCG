@@ -357,8 +357,13 @@ class ManagerWindow(QMainWindow):
         if env_id:
             set_active_env(env_id)
             # When environment changes, trigger a full UI reload of states
-            self.refresh_all(scan_workflows=True)
+            self.refresh_all()
             self.update_system_status()
+
+    def refresh_all(self):
+        """Convenience wrapper to refresh all major UI panels."""
+        self.refresh_workflows()
+        self.populate_all_models_table()
             
     def _open_env_manager(self):
         from ui.env_manager_dialog import EnvManagerDialog
@@ -730,7 +735,7 @@ class ManagerWindow(QMainWindow):
         dialog = WorkflowValidatorDialog(filename, self)
         if dialog.exec():
             QMessageBox.information(self, "검증 완료", f"{filename}의 모든 모델/노드 URL이 등록 대기열에 추가되었습니다.\n[새로고침]을 눌러 다운로드를 진행하세요.")
-            self.refresh_all(scan_workflows=True)
+            self.refresh_all()
     
     def _create_settings_tab(self):
         """Create the Settings tab (NEW)."""
@@ -1334,43 +1339,7 @@ class ManagerWindow(QMainWindow):
             QComboBox::drop-down { border: none; }
         """
         
-    def show_nodes_context_menu(self, position):
-        """Show context menu for nodes tree."""
-        item = self.nodes_tree.itemAt(position)
-        if not item:
-            return
-            
-        menu = QMenu(self.nodes_tree)
-        menu.setStyleSheet("""
-            QMenu { background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; }
-            QMenu::item { padding: 6px 24px; font-weight: bold; }
-            QMenu::item:selected { background-color: #f1f5f9; color: #0f172a; }
-        """)
-        
-        copy_action = QAction("Copy Name", self)
-        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(item.text(0)))
-        menu.addAction(copy_action)
-        
-        menu.exec(self.nodes_tree.viewport().mapToGlobal(position))
-        
-    def show_models_context_menu(self, position):
-        """Show context menu for models tree."""
-        item = self.models_tree.itemAt(position)
-        if not item:
-            return
-            
-        menu = QMenu(self.models_tree)
-        menu.setStyleSheet("""
-            QMenu { background-color: #ffffff; color: #1e293b; border: 1px solid #e2e8f0; border-radius: 8px; }
-            QMenu::item { padding: 6px 24px; font-weight: bold; }
-            QMenu::item:selected { background-color: #f1f5f9; color: #0f172a; }
-        """)
-        
-        copy_action = QAction("Copy Name", self)
-        copy_action.triggered.connect(lambda: QApplication.clipboard().setText(item.text(0)))
-        menu.addAction(copy_action)
-        
-        menu.exec(self.models_tree.viewport().mapToGlobal(position))
+    # Legacy context menus (nodes_tree / models_tree) removed in Phase 8 tabular redesign.
     
     def run_startup_checks(self):
         self.startup_frame.show()
@@ -1489,20 +1458,18 @@ class ManagerWindow(QMainWindow):
     
     def validate_current_workflow(self):
         """현재 선택된 워크플로우의 의존성을 검증합니다."""
-        current = self.workflow_list.currentItem()
-        if not current:
+        if not hasattr(self, 'workflow_list_table'):
+            return
+        row = self.workflow_list_table.currentRow()
+        if row < 0:
             QMessageBox.warning(self, "워크플로우 선택", "먼저 워크플로우를 선택하세요.")
             return
         
-        filename = current.data(Qt.UserRole)
-        dialog = WorkflowValidatorDialog(filename, self)
-        
-        if dialog.exec() == QDialog.Accepted and dialog.is_resolved():
-            self.status_bar.showMessage(f"✓ {filename} 의존성 검증 완료")
-            # Refresh dependencies display
-            self.check_dependencies(filename)
-        else:
-            self.status_bar.showMessage(f"✗ {filename} 검증 취소됨")
+        item = self.workflow_list_table.item(row, 0)
+        if not item:
+            return
+        filename = item.text()
+        self._validate_workflow(filename)
     
     def update_node_db(self):
         self.status_bar.showMessage("Refreshing databases...")
@@ -1784,32 +1751,34 @@ class ManagerWindow(QMainWindow):
         if not url:
             return
             
-        current = self.models_tree.currentItem()
-        if not current:
+        row = self.models_table.currentRow()
+        if row < 0:
             return
             
-        model = current.data(0, Qt.UserRole)
-        model_name = model["name"]
+        item = self.models_table.item(row, 0)
+        if not item:
+            return
+        model_name = item.text()
         folder = guess_model_folder(model_name)
         
         success, msg = save_url_to_model_db(model_name, url, folder)
         if success:
             self.status_bar.showMessage(f"직접 저장됨: {model_name}")
-            self.add_model_to_queue({"name": model_name}, url)
-            # Refresh dependencies to hide input box
-            wf_item = self.workflow_list.currentItem()
-            if wf_item:
-                self.check_dependencies(wf_item.data(Qt.UserRole))
+            self.add_model_to_queue(model_name, url)
+            self.populate_all_models_table()
         else:
             QMessageBox.warning(self, "저장 실패", msg)
             
     def _run_advanced_search(self):
         """Run Tavily advanced search in background."""
-        current = self.models_tree.currentItem()
-        if not current:
+        row = self.models_table.currentRow()
+        if row < 0:
             return
-            
-        model = current.data(0, Qt.UserRole)
+
+        item = self.models_table.item(row, 0)
+        if not item:
+            return
+        model = {"name": item.text()}
         api_key = get_api_key("tavily_api_key")
         if not api_key:
             QMessageBox.information(self, "API Key 필요", "고급 검색을 사용하려면 설정 탭에서 Tavily API 키를 입력해주세요.")
@@ -1972,11 +1941,7 @@ class ManagerWindow(QMainWindow):
         self.populate_all_models_table()
 
         
-        self.queue_summary.setText("All downloads complete! ✓")
-        
-        current = self.workflow_list.currentItem()
-        if current:
-            self.check_dependencies(current.data(Qt.UserRole))
+        self.status_bar.showMessage("All downloads complete! ✓")
         
         QMessageBox.information(self, "Done", "All downloads complete!")
     
