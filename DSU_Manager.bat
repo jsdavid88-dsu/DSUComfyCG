@@ -5,10 +5,18 @@ echo   DSUComfyCG - Starting Manager Environment
 echo ========================================================
 echo.
 
-:: Auto-Update from GitHub (including reference project submodule)
-echo [INFO] Checking for updates from GitHub...
-git pull 2>nul
-git submodule update --init --recursive 2>nul
+:: ============================================================
+:: AUTO-UPDATE (skip gracefully if not a git repo)
+:: ============================================================
+git rev-parse --is-inside-work-tree >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [INFO] Checking for updates from GitHub...
+    git pull 2>nul
+    git submodule update --init --recursive 2>nul
+) else (
+    echo [INFO] Not a git repository - skipping auto-update.
+    echo        To enable auto-updates, clone with: git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
+)
 echo.
 
 :: ============================================================
@@ -35,7 +43,7 @@ if exist "python_embeded\python.exe" (
 
 :: 3) No Python at all - auto-download embedded Python 3.12
 echo [WARN] Python not found on this system!
-echo [INFO] Downloading Python 3.12 Embedded (one-time setup)...
+echo [INFO] Downloading Python 3.12 Embedded (one-time setup, ~15MB)...
 echo.
 
 set "PY_URL=https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
@@ -47,7 +55,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%PY_ZIP%'"
 
 if not exist "%PY_ZIP%" (
-    echo [ERROR] Failed to download Python. Check internet connection.
+    echo [ERROR] Failed to download Python. Check your internet connection.
     pause
     exit /b
 )
@@ -59,7 +67,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 del "%PY_ZIP%" 2>nul
 
-:: Enable pip by uncommenting import site in python312._pth
+:: Enable pip by uncommenting 'import site' in python312._pth
 echo [INFO] Enabling pip support...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "(Get-Content '%PY_DIR%\python312._pth') -replace '#import site','import site' | Set-Content '%PY_DIR%\python312._pth'"
@@ -81,42 +89,72 @@ echo [INFO] Using: %PYTHON_EXE%
 echo.
 
 :: ============================================================
-:: VIRTUAL ENVIRONMENT SETUP
+:: DEPENDENCY INSTALLATION
 :: ============================================================
-if not exist ".venv\Scripts\python.exe" (
-    echo [INFO] Creating Python Virtual Environment ^(.venv^)...
-    "%PYTHON_EXE%" -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [ERROR] Failed to create virtual environment.
-        pause
-        exit /b
-    )
-)
+:: Embedded Python does NOT support venv - install directly.
+:: System Python uses venv for isolation.
+:: ============================================================
 
 :: Clear __pycache__ to avoid stale .pyc issues on network drives
 if exist "Manager\__pycache__" rd /s /q "Manager\__pycache__" >nul 2>&1
 if exist "Manager\ui\__pycache__" rd /s /q "Manager\ui\__pycache__" >nul 2>&1
 if exist "Manager\core\__pycache__" rd /s /q "Manager\core\__pycache__" >nul 2>&1
 
-:: Activate venv and install dependencies
-echo [INFO] Installing required UI dependencies...
-call .venv\Scripts\activate.bat
-
-:: Ensure pip is available (handles systems where pip is missing)
-python -m pip --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARN] pip not found. Bootstrapping pip...
-    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-        "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py'"
-    python "%TEMP%\get-pip.py" --no-warn-script-location >nul 2>&1
-    del "%TEMP%\get-pip.py" 2>nul
+if "%USING_EMBEDDED%"=="1" (
+    echo [INFO] Installing dependencies into Embedded Python...
+    
+    :: Ensure pip exists in embedded Python
+    "%PYTHON_EXE%" -m pip --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [WARN] pip missing in embedded Python. Bootstrapping...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py'"
+        "%PYTHON_EXE%" "%TEMP%\get-pip.py" --no-warn-script-location >nul 2>&1
+        del "%TEMP%\get-pip.py" 2>nul
+    )
+    
+    "%PYTHON_EXE%" -m pip install --upgrade pip >nul 2>&1
+    "%PYTHON_EXE%" -m pip install PySide6 requests --no-warn-script-location >nul 2>&1
+    
+    :: Run the Manager directly with embedded Python
+    echo [INFO] Launching DSUComfyCG Manager...
+    "%PYTHON_EXE%" Manager\main.py
+    
+) else (
+    :: System Python path - use venv for isolation
+    if not exist ".venv\Scripts\python.exe" (
+        echo [INFO] Creating Python Virtual Environment ^(.venv^)...
+        "%PYTHON_EXE%" -m venv .venv
+        if %errorlevel% neq 0 (
+            echo [ERROR] Failed to create virtual environment.
+            pause
+            exit /b
+        )
+    )
+    
+    echo [INFO] Installing required UI dependencies...
+    call .venv\Scripts\activate.bat
+    
+    :: Ensure pip is available in venv
+    python -m pip --version >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo [WARN] pip missing in venv. Bootstrapping...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%TEMP%\get-pip.py'"
+        python "%TEMP%\get-pip.py" --no-warn-script-location >nul 2>&1
+        del "%TEMP%\get-pip.py" 2>nul
+    )
+    
+    python -m pip install --upgrade pip >nul 2>&1
+    python -m pip install PySide6 requests --no-warn-script-location >nul 2>&1
+    
+    :: Run the Manager
+    echo [INFO] Launching DSUComfyCG Manager...
+    python Manager\main.py
+    
+    :: Deactivate venv upon exit
+    deactivate >nul 2>&1
 )
-python -m pip install --upgrade pip >nul 2>&1
-python -m pip install PySide6 requests --no-warn-script-location >nul 2>&1
-
-:: Run the Manager
-echo [INFO] Launching DSUComfyCG Manager...
-python Manager\main.py
 
 if %errorlevel% neq 0 (
     echo.
@@ -125,6 +163,3 @@ if %errorlevel% neq 0 (
     echo -------------------------------------------------------------------------
     pause
 )
-
-:: Deactivate upon exit
-deactivate >nul 2>&1
