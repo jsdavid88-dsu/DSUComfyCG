@@ -61,6 +61,12 @@ def install_addon(addon_id, python_executable, comfy_path, callback=None):
         return True, "SageAttention v2 & v3 Installed Successfully."
 
     elif addon_id == "nunchaku":
+        # Ensure git is available
+        from core.checker import ensure_git_installed
+        git_success, git_msg = ensure_git_installed(callback)
+        if not git_success:
+            return False, f"Git required: {git_msg}"
+            
         # Nunchaku needs the custom node cloned as well
         custom_nodes_path = os.path.join(comfy_path, "custom_nodes", "ComfyUI-nunchaku")
         if not os.path.exists(custom_nodes_path):

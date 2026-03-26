@@ -1365,6 +1365,10 @@ def install_node(git_url, enable_rollback=True):
         git_url: URL of the git repository
         enable_rollback: If True, attempt to restore packages on severe conflict
     """
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        return False, f"Git required for installation: {git_msg}", None
+
     if not git_url:
         return False, "No URL provided", None
 
@@ -2040,6 +2044,10 @@ def check_custom_nodes_updates():
 
 def update_comfyui():
     """Update ComfyUI via git pull. Returns (success, message)."""
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        return False, f"Git required for updating: {git_msg}"
+        
     if not os.path.exists(get_comfy_path()):
         return False, "ComfyUI not installed"
     
@@ -2060,6 +2068,10 @@ def update_comfyui():
 
 def update_custom_node(node_name):
     """Update a single custom node. Returns (success, message)."""
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        return False, f"Git required for updating: {git_msg}"
+        
     node_path = os.path.join(get_custom_nodes_path(), node_name)
     
     if not os.path.exists(node_path):
