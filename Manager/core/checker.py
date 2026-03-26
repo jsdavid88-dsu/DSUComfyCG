@@ -1471,13 +1471,9 @@ def run_comfyui():
 
 def install_comfyui(progress_cb=None):
     """
-    Full one-click ComfyUI installation pipeline:
-    1. Clone ComfyUI repository
-    2. Download Python 3.12 Embedded (with PyTorch support)
-    3. Setup pip
-    4. Install PyTorch + CUDA
-    5. Install ComfyUI requirements
-    6. Copy default workflows
+    Full one-click ComfyUI installation using ComfyUI-Easy-Install.
+    Downloads the official Easy-Install package from Tavris1's GitHub releases,
+    which includes Python Embedded (with PyTorch+CUDA), ComfyUI, and all scripts.
     Returns (success, message).
     """
     import shutil
@@ -1486,145 +1482,134 @@ def install_comfyui(progress_cb=None):
     
     comfy_path = get_comfy_path()
     comfy_parent = os.path.dirname(comfy_path)
-    python_dir = os.path.join(comfy_parent, "python_embeded")
-    python_exe = os.path.join(python_dir, "python.exe")
+    
+    # If ComfyUI + python_embeded already exist, skip
+    python_exe = os.path.join(comfy_parent, "python_embeded", "python.exe")
+    if os.path.exists(os.path.join(comfy_path, "main.py")) and os.path.exists(python_exe):
+        return True, "ComfyUI is already installed."
     
     def _progress(msg):
         logger.info(msg)
         if progress_cb:
             progress_cb(msg)
     
-    # ── Step 1: Clone ComfyUI ──
-    if not os.path.exists(os.path.join(comfy_path, "main.py")):
-        _progress("Step 1/5: Cloning ComfyUI repository...")
-        os.makedirs(comfy_parent, exist_ok=True)
+    EASY_INSTALL_URL = "https://github.com/Tavris1/ComfyUI-Easy-Install/releases/latest/download/ComfyUI-Easy-Install.zip"
+    
+    # ── Step 1: Download ComfyUI-Easy-Install package ──
+    _progress("Step 1/3: Downloading ComfyUI-Easy-Install package (~43MB)...")
+    
+    os.makedirs(comfy_parent, exist_ok=True)
+    zip_path = os.path.join(comfy_parent, "ComfyUI-Easy-Install.zip")
+    
+    try:
+        def _reporthook(block_num, block_size, total_size):
+            downloaded = block_num * block_size
+            if total_size > 0:
+                pct = min(100, int(downloaded * 100 / total_size))
+                mb = downloaded / (1024 * 1024)
+                total_mb = total_size / (1024 * 1024)
+                if pct % 10 == 0 and progress_cb:
+                    progress_cb(f"  Downloading: {mb:.1f}/{total_mb:.1f} MB ({pct}%)")
         
+        urllib.request.urlretrieve(EASY_INSTALL_URL, zip_path, _reporthook)
+    except Exception as e:
+        return False, f"다운로드 실패: {e}\n인터넷 연결을 확인해 주세요."
+    
+    if not os.path.exists(zip_path):
+        return False, "ComfyUI-Easy-Install.zip 다운로드에 실패했습니다."
+    
+    _progress("✓ Download complete.")
+    
+    # ── Step 2: Extract the package ──
+    _progress("Step 2/3: Extracting ComfyUI-Easy-Install...")
+    
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(comfy_parent)
+        os.remove(zip_path)
+    except Exception as e:
+        return False, f"압축 해제 실패: {e}"
+    
+    # The Easy-Install zip may contain a nested Helper-CEI.zip or a folder.
+    # Check for the nested structure and extract if needed.
+    helper_zip = os.path.join(comfy_parent, "Helper-CEI.zip")
+    if os.path.exists(helper_zip):
+        _progress("Extracting Helper-CEI.zip...")
+        try:
+            with zipfile.ZipFile(helper_zip, 'r') as zf:
+                zf.extractall(comfy_parent)
+            os.remove(helper_zip)
+        except Exception as e:
+            logger.warning(f"Helper-CEI extraction warning: {e}")
+    
+    # Check if extraction created a subfolder like "ComfyUI-Easy-Install/"
+    # and move its contents up to comfy_parent level
+    easy_install_dir = os.path.join(comfy_parent, "ComfyUI-Easy-Install")
+    if os.path.isdir(easy_install_dir):
+        _progress("Reorganizing files...")
+        for item in os.listdir(easy_install_dir):
+            src = os.path.join(easy_install_dir, item)
+            dst = os.path.join(comfy_parent, item)
+            if not os.path.exists(dst):
+                shutil.move(src, dst)
+            elif os.path.isdir(src) and os.path.isdir(dst):
+                # Merge directories
+                for sub_item in os.listdir(src):
+                    sub_src = os.path.join(src, sub_item)
+                    sub_dst = os.path.join(dst, sub_item)
+                    if not os.path.exists(sub_dst):
+                        shutil.move(sub_src, sub_dst)
+        shutil.rmtree(easy_install_dir, ignore_errors=True)
+    
+    _progress("✓ Extraction complete.")
+    
+    # ── Step 3: Run the Easy-Install batch script ──
+    easy_install_bat = os.path.join(comfy_parent, "ComfyUI-Easy-Install.bat")
+    if os.path.exists(easy_install_bat):
+        _progress("Step 3/3: Running ComfyUI-Easy-Install.bat...")
         try:
             process = subprocess.Popen(
-                ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", comfy_path],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                ["cmd.exe", "/c", easy_install_bat],
+                cwd=comfy_parent,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
             )
-            stdout, stderr = process.communicate()
+            for line in iter(process.stdout.readline, ''):
+                line = line.strip()
+                if line and progress_cb:
+                    progress_cb(f"  {line[:120]}")
+            process.wait()
+            
             if process.returncode != 0:
-                return False, f"Failed to clone ComfyUI:\n{stderr}"
-            _progress("✓ ComfyUI cloned successfully.")
-        except FileNotFoundError:
-            return False, "Git을 찾을 수 없습니다. DSU_Manager.bat을 먼저 실행해 주세요."
+                logger.warning(f"Easy-Install returned code {process.returncode}")
         except Exception as e:
-            return False, f"Failed to clone ComfyUI: {e}"
+            logger.warning(f"Easy-Install batch warning: {e}")
     else:
-        _progress("Step 1/5: ComfyUI already exists. Skipping clone.")
+        _progress("Step 3/3: No Easy-Install.bat found. Checking installation...")
     
-    # ── Step 2: Download Python Embedded ──
-    if not os.path.exists(python_exe):
-        _progress("Step 2/5: Downloading Python 3.12 Embedded (~15MB)...")
+    # ── Verify installation ──
+    if os.path.exists(os.path.join(comfy_path, "main.py")):
+        # Copy our default workflows
+        source_workflows = os.path.join(BASE_DIR, "workflows")
+        target_workflows = os.path.join(comfy_path, "user", "default", "workflows")
+        if os.path.exists(source_workflows):
+            try:
+                os.makedirs(target_workflows, exist_ok=True)
+                for item in os.listdir(source_workflows):
+                    if item.endswith(".json"):
+                        shutil.copy2(os.path.join(source_workflows, item),
+                                    os.path.join(target_workflows, item))
+                _progress("✓ Default workflows copied.")
+            except Exception as e:
+                logger.warning(f"Failed to copy workflows: {e}")
         
-        py_url = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
-        py_zip = os.path.join(comfy_parent, "_python_temp.zip")
-        
-        try:
-            urllib.request.urlretrieve(py_url, py_zip)
-        except Exception as e:
-            return False, f"Python 다운로드 실패: {e}\n인터넷 연결을 확인해 주세요."
-        
-        _progress("Extracting Python...")
-        try:
-            with zipfile.ZipFile(py_zip, 'r') as zf:
-                zf.extractall(python_dir)
-            os.remove(py_zip)
-        except Exception as e:
-            return False, f"Python 압축 해제 실패: {e}"
-        
-        # Enable pip: uncomment 'import site' in python312._pth
-        pth_file = os.path.join(python_dir, "python312._pth")
-        if os.path.exists(pth_file):
-            with open(pth_file, 'r') as f:
-                content = f.read()
-            content = content.replace('#import site', 'import site')
-            with open(pth_file, 'w') as f:
-                f.write(content)
-        
-        _progress("✓ Python 3.12 Embedded installed.")
+        _progress("🎉 Installation complete! Click 'Run ComfyUI' to start.")
+        return True, "ComfyUI-Easy-Install 패키지로 설치가 완료되었습니다!\nPython + PyTorch + ComfyUI가 모두 포함되어 있습니다.\n\n'Run ComfyUI' 버튼을 눌러 실행하세요."
     else:
-        _progress("Step 2/5: Python Embedded already exists. Skipping.")
-    
-    # ── Step 3: Install pip ──
-    _progress("Step 3/5: Installing pip...")
-    try:
-        # Check if pip already works
-        result = subprocess.run([python_exe, "-m", "pip", "--version"],
-                                capture_output=True, text=True, timeout=10)
-        if result.returncode != 0:
-            get_pip_path = os.path.join(python_dir, "get-pip.py")
-            urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_path)
-            subprocess.run([python_exe, get_pip_path, "--no-warn-script-location"],
-                          capture_output=True, text=True, timeout=120)
-            _progress("✓ pip installed.")
-        else:
-            _progress("✓ pip already available.")
-    except Exception as e:
-        return False, f"pip 설치 실패: {e}"
-    
-    # ── Step 4: Install PyTorch + CUDA ──
-    _progress("Step 4/5: Installing PyTorch 2.8 + CUDA 12.8 (~2.5GB, please wait)...")
-    try:
-        torch_cmd = [
-            python_exe, "-s", "-m", "pip", "install",
-            "torch==2.8.0", "torchvision==0.23.0", "torchaudio==2.8.0",
-            "--index-url", "https://download.pytorch.org/whl/cu128",
-            "--no-warn-script-location"
-        ]
-        process = subprocess.Popen(torch_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, encoding='utf-8', errors='replace')
-        for line in iter(process.stdout.readline, ''):
-            line = line.strip()
-            if line and progress_cb:
-                # Show download progress lines
-                if 'Downloading' in line or 'Installing' in line or 'Successfully' in line:
-                    progress_cb(f"  {line[:100]}")
-        process.wait()
-        
-        if process.returncode != 0:
-            return False, "PyTorch 설치에 실패했습니다. 인터넷 연결과 디스크 공간을 확인해 주세요."
-        _progress("✓ PyTorch + CUDA installed.")
-    except Exception as e:
-        return False, f"PyTorch 설치 실패: {e}"
-    
-    # ── Step 5: Install ComfyUI requirements ──
-    requirements_file = os.path.join(comfy_path, "requirements.txt")
-    if os.path.exists(requirements_file):
-        _progress("Step 5/5: Installing ComfyUI dependencies...")
-        try:
-            req_cmd = [
-                python_exe, "-s", "-m", "pip", "install",
-                "-r", requirements_file,
-                "pygit2",
-                "--no-warn-script-location"
-            ]
-            result = subprocess.run(req_cmd, capture_output=True, text=True,
-                                   encoding='utf-8', errors='replace', timeout=600)
-            if result.returncode != 0:
-                logger.warning(f"Some requirements may have failed: {result.stderr[:200]}")
-            _progress("✓ ComfyUI dependencies installed.")
-        except Exception as e:
-            logger.warning(f"Requirements install warning: {e}")
-    
-    # ── Copy default workflows ──
-    source_workflows = os.path.join(BASE_DIR, "workflows")
-    target_workflows = os.path.join(comfy_path, "user", "default", "workflows")
-    if os.path.exists(source_workflows):
-        try:
-            os.makedirs(target_workflows, exist_ok=True)
-            for item in os.listdir(source_workflows):
-                if item.endswith(".json"):
-                    shutil.copy2(os.path.join(source_workflows, item),
-                                os.path.join(target_workflows, item))
-            _progress("✓ Default workflows copied.")
-        except Exception as e:
-            logger.warning(f"Failed to copy workflows: {e}")
-    
-    _progress("🎉 Installation complete! Click 'Run ComfyUI' to start.")
-    return True, "ComfyUI 설치가 완료되었습니다!\nPython + PyTorch + 종속성이 모두 설치되었습니다.\n\n'Run ComfyUI' 버튼을 눌러 실행하세요."
+        return False, f"설치는 완료되었으나 ComfyUI main.py를 찾을 수 없습니다.\n경로: {comfy_path}\n\n수동으로 확인해 주세요."
 
 
 # =============================================================================
