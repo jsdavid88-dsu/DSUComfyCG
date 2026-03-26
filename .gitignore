@@ -18,6 +18,8 @@ Thumbs.db
 # After install (don't track installed files)
 python_embeded/
 git_portable/
+envs/
+models/
 DSUComfyCG/python_embeded/
 DSUComfyCG/ComfyUI/
 DSUComfyCG/models/
