@@ -1,11 +1,4 @@
 {
     "active_env_id": "env_default",
-    "environments": {
-        "env_default": {
-            "name": "Default ComfyUI",
-            "type": "production",
-            "path": "z:/Antigravity_prj/3D_Comfy_RnD/DSUComfyCG/ComfyUI",
-            "memo": "Default built-in installation"
-        }
-    }
+    "environments": {}
 }

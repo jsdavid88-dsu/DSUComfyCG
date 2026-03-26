@@ -61,8 +61,15 @@ if !errorlevel! equ 0 (
     "%GIT_EXE%" pull 2>nul
     "%GIT_EXE%" submodule update --init --recursive 2>nul
 ) else (
-    echo [INFO] Not a git repository - skipping auto-update.
-    echo        To enable: git clone https://github.com/jsdavid88-dsu/DSUComfyCG.git
+    echo [INFO] Not a git repository. Converting to enable auto-updates...
+    "%GIT_EXE%" init >nul 2>&1
+    "%GIT_EXE%" remote add origin https://github.com/jsdavid88-dsu/DSUComfyCG.git 2>nul
+    "%GIT_EXE%" fetch origin >nul 2>&1
+    "%GIT_EXE%" reset --mixed origin/main >nul 2>&1
+    "%GIT_EXE%" branch -M main >nul 2>&1
+    "%GIT_EXE%" branch --set-upstream-to=origin/main main >nul 2>&1
+    "%GIT_EXE%" submodule update --init --recursive 2>nul
+    echo [OK] Git repo initialized! Auto-updates enabled for next run.
 )
 echo.
 
