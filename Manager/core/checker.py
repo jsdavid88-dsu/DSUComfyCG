@@ -1330,7 +1330,7 @@ def install_node(git_url, enable_rollback=True):
 def get_system_status():
     """Get system information."""
     status = {
-        "comfyui_installed": os.path.exists(get_comfy_path()),
+        "comfy_installed": os.path.exists(get_comfy_path()) and os.path.exists(os.path.join(get_comfy_path(), "main.py")),
         "python_installed": os.path.exists(get_python_path()),
         "python_version": None,
         "cuda_available": False,
