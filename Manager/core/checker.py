@@ -42,6 +42,60 @@ logger = logging.getLogger("Checker")
 MANAGER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASE_DIR = os.path.dirname(MANAGER_DIR)
 WORKFLOWS_DIR = os.path.join(BASE_DIR, "workflows")
+
+def setup_portable_git():
+    """Ensure git_portable/cmd is in PATH if it exists."""
+    portable_git_dir = os.path.join(BASE_DIR, "git_portable")
+    portable_git_cmd = os.path.join(portable_git_dir, "cmd")
+    if os.path.exists(portable_git_cmd):
+        if portable_git_cmd not in os.environ.get("PATH", ""):
+            os.environ["PATH"] = f"{portable_git_cmd}{os.pathsep}{os.environ.get('PATH', '')}"
+
+setup_portable_git()
+
+def ensure_git_installed(progress_cb=None):
+    import shutil
+    import subprocess
+    import urllib.request
+    
+    setup_portable_git()
+    if shutil.which("git"):
+        return True, "Git is installed."
+        
+    # Download Portable Git
+    if progress_cb:
+        progress_cb("Git not found. Downloading Portable Git...")
+        
+    portable_git_dir = os.path.join(BASE_DIR, "git_portable")
+    os.makedirs(portable_git_dir, exist_ok=True)
+    git_url = "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/PortableGit-2.44.0-64-bit.7z.exe"
+    exe_path = os.path.join(portable_git_dir, "PortableGit.exe")
+    
+    try:
+        urllib.request.urlretrieve(git_url, exe_path)
+    except Exception as e:
+        return False, f"Failed to download Portable Git: {e}"
+        
+    if progress_cb:
+        progress_cb("Extracting Portable Git (This may take a minute)...")
+    
+    try:
+        subprocess.run([exe_path, "-y"], cwd=portable_git_dir, check=True)
+        try:
+            os.remove(exe_path)
+        except:
+            pass
+    except Exception as e:
+        return False, f"Failed to extract Portable Git: {e}"
+        
+    setup_portable_git()
+    if shutil.which("git"):
+        if progress_cb:
+            progress_cb("✓ Portable Git installed successfully.")
+        return True, "Portable Git installed."
+    else:
+        return False, "Portable Git extraction failed."
+
 # --- Multi-Instance Environment Management ---
 ENVS_FILE = os.path.join(MANAGER_DIR, "data", "envs.json")
 ACTIVE_ENV_ID = "env_default"
@@ -1554,6 +1608,11 @@ def install_comfyui(env_name="stable", options=None, progress_cb=None):
     
     PIP_ARGS = "--no-cache-dir --no-warn-script-location --timeout=1000 --retries 10"
     UV_ARGS = "--no-cache --link-mode=copy"
+    
+    # ── Step 0: Ensure Git ──
+    git_success, git_msg = ensure_git_installed(_progress)
+    if not git_success:
+        return False, f"Git 준비 실패: {git_msg}"
     
     os.makedirs(env_dir, exist_ok=True)
     
