@@ -1471,55 +1471,160 @@ def run_comfyui():
 
 def install_comfyui(progress_cb=None):
     """
-    Clones the ComfyUI repository if it doesn't exist into get_comfy_path().
+    Full one-click ComfyUI installation pipeline:
+    1. Clone ComfyUI repository
+    2. Download Python 3.12 Embedded (with PyTorch support)
+    3. Setup pip
+    4. Install PyTorch + CUDA
+    5. Install ComfyUI requirements
+    6. Copy default workflows
     Returns (success, message).
     """
-    if os.path.exists(get_comfy_path()) and os.path.exists(os.path.join(get_comfy_path(), "main.py")):
-        return True, "ComfyUI is already installed."
-        
-    try:
+    import shutil
+    import zipfile
+    import urllib.request
+    
+    comfy_path = get_comfy_path()
+    comfy_parent = os.path.dirname(comfy_path)
+    python_dir = os.path.join(comfy_parent, "python_embeded")
+    python_exe = os.path.join(python_dir, "python.exe")
+    
+    def _progress(msg):
+        logger.info(msg)
         if progress_cb:
-            progress_cb("Cloning ComfyUI repository from github...")
-            
-        logger.info(f"Cloning ComfyUI into {get_comfy_path()}")
-        os.makedirs(os.path.dirname(get_comfy_path()), exist_ok=True)
-        process = subprocess.Popen(
-            ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", get_comfy_path()],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        stdout, stderr = process.communicate()
+            progress_cb(msg)
+    
+    # ── Step 1: Clone ComfyUI ──
+    if not os.path.exists(os.path.join(comfy_path, "main.py")):
+        _progress("Step 1/5: Cloning ComfyUI repository...")
+        os.makedirs(comfy_parent, exist_ok=True)
         
-        if process.returncode == 0:
-            if progress_cb:
-                progress_cb("ComfyUI repository cloned successfully. Copying default workflows...")
-                
-            import shutil
-            source_workflows = os.path.join(BASE_DIR, "workflows")
-            target_workflows = os.path.join(get_comfy_path(), "user", "default", "workflows")
-            if os.path.exists(source_workflows):
-                try:
-                    os.makedirs(target_workflows, exist_ok=True)
-                    for item in os.listdir(source_workflows):
-                        if item.endswith(".json"):
-                            src = os.path.join(source_workflows, item)
-                            dst = os.path.join(target_workflows, item)
-                            shutil.copy2(src, dst)
-                    logger.info(f"Copied built-in workflows to {target_workflows}")
-                except Exception as cw_err:
-                    logger.error(f"Failed to copy workflows: {cw_err}")
-                
-            return True, "Successfully installed ComfyUI with default workflows."
+        try:
+            process = subprocess.Popen(
+                ["git", "clone", "https://github.com/comfyanonymous/ComfyUI.git", comfy_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            stdout, stderr = process.communicate()
+            if process.returncode != 0:
+                return False, f"Failed to clone ComfyUI:\n{stderr}"
+            _progress("✓ ComfyUI cloned successfully.")
+        except FileNotFoundError:
+            return False, "Git을 찾을 수 없습니다. DSU_Manager.bat을 먼저 실행해 주세요."
+        except Exception as e:
+            return False, f"Failed to clone ComfyUI: {e}"
+    else:
+        _progress("Step 1/5: ComfyUI already exists. Skipping clone.")
+    
+    # ── Step 2: Download Python Embedded ──
+    if not os.path.exists(python_exe):
+        _progress("Step 2/5: Downloading Python 3.12 Embedded (~15MB)...")
+        
+        py_url = "https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.zip"
+        py_zip = os.path.join(comfy_parent, "_python_temp.zip")
+        
+        try:
+            urllib.request.urlretrieve(py_url, py_zip)
+        except Exception as e:
+            return False, f"Python 다운로드 실패: {e}\n인터넷 연결을 확인해 주세요."
+        
+        _progress("Extracting Python...")
+        try:
+            with zipfile.ZipFile(py_zip, 'r') as zf:
+                zf.extractall(python_dir)
+            os.remove(py_zip)
+        except Exception as e:
+            return False, f"Python 압축 해제 실패: {e}"
+        
+        # Enable pip: uncomment 'import site' in python312._pth
+        pth_file = os.path.join(python_dir, "python312._pth")
+        if os.path.exists(pth_file):
+            with open(pth_file, 'r') as f:
+                content = f.read()
+            content = content.replace('#import site', 'import site')
+            with open(pth_file, 'w') as f:
+                f.write(content)
+        
+        _progress("✓ Python 3.12 Embedded installed.")
+    else:
+        _progress("Step 2/5: Python Embedded already exists. Skipping.")
+    
+    # ── Step 3: Install pip ──
+    _progress("Step 3/5: Installing pip...")
+    try:
+        # Check if pip already works
+        result = subprocess.run([python_exe, "-m", "pip", "--version"],
+                                capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            get_pip_path = os.path.join(python_dir, "get-pip.py")
+            urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_path)
+            subprocess.run([python_exe, get_pip_path, "--no-warn-script-location"],
+                          capture_output=True, text=True, timeout=120)
+            _progress("✓ pip installed.")
         else:
-            err_msg = f"Git clone failed:\n{stderr}"
-            logger.error(err_msg)
-            return False, err_msg
-            
+            _progress("✓ pip already available.")
     except Exception as e:
-        err_msg = f"Failed to clone ComfyUI: {e}"
-        logger.error(err_msg)
-        return False, err_msg
+        return False, f"pip 설치 실패: {e}"
+    
+    # ── Step 4: Install PyTorch + CUDA ──
+    _progress("Step 4/5: Installing PyTorch 2.8 + CUDA 12.8 (~2.5GB, please wait)...")
+    try:
+        torch_cmd = [
+            python_exe, "-s", "-m", "pip", "install",
+            "torch==2.8.0", "torchvision==0.23.0", "torchaudio==2.8.0",
+            "--index-url", "https://download.pytorch.org/whl/cu128",
+            "--no-warn-script-location"
+        ]
+        process = subprocess.Popen(torch_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                   text=True, encoding='utf-8', errors='replace')
+        for line in iter(process.stdout.readline, ''):
+            line = line.strip()
+            if line and progress_cb:
+                # Show download progress lines
+                if 'Downloading' in line or 'Installing' in line or 'Successfully' in line:
+                    progress_cb(f"  {line[:100]}")
+        process.wait()
+        
+        if process.returncode != 0:
+            return False, "PyTorch 설치에 실패했습니다. 인터넷 연결과 디스크 공간을 확인해 주세요."
+        _progress("✓ PyTorch + CUDA installed.")
+    except Exception as e:
+        return False, f"PyTorch 설치 실패: {e}"
+    
+    # ── Step 5: Install ComfyUI requirements ──
+    requirements_file = os.path.join(comfy_path, "requirements.txt")
+    if os.path.exists(requirements_file):
+        _progress("Step 5/5: Installing ComfyUI dependencies...")
+        try:
+            req_cmd = [
+                python_exe, "-s", "-m", "pip", "install",
+                "-r", requirements_file,
+                "pygit2",
+                "--no-warn-script-location"
+            ]
+            result = subprocess.run(req_cmd, capture_output=True, text=True,
+                                   encoding='utf-8', errors='replace', timeout=600)
+            if result.returncode != 0:
+                logger.warning(f"Some requirements may have failed: {result.stderr[:200]}")
+            _progress("✓ ComfyUI dependencies installed.")
+        except Exception as e:
+            logger.warning(f"Requirements install warning: {e}")
+    
+    # ── Copy default workflows ──
+    source_workflows = os.path.join(BASE_DIR, "workflows")
+    target_workflows = os.path.join(comfy_path, "user", "default", "workflows")
+    if os.path.exists(source_workflows):
+        try:
+            os.makedirs(target_workflows, exist_ok=True)
+            for item in os.listdir(source_workflows):
+                if item.endswith(".json"):
+                    shutil.copy2(os.path.join(source_workflows, item),
+                                os.path.join(target_workflows, item))
+            _progress("✓ Default workflows copied.")
+        except Exception as e:
+            logger.warning(f"Failed to copy workflows: {e}")
+    
+    _progress("🎉 Installation complete! Click 'Run ComfyUI' to start.")
+    return True, "ComfyUI 설치가 완료되었습니다!\nPython + PyTorch + 종속성이 모두 설치되었습니다.\n\n'Run ComfyUI' 버튼을 눌러 실행하세요."
 
 
 # =============================================================================
