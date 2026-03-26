@@ -54,16 +54,17 @@ def load_envs():
             with open(ENVS_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 ENVIRONMENTS = data.get("environments", {})
-                ACTIVE_ENV_ID = data.get("active_env_id", "env_default")
+                ACTIVE_ENV_ID = data.get("active_env_id", "env_stable")
         except Exception as e:
             logger.error(f"Failed to load envs.json: {e}")
             
-    if "env_default" not in ENVIRONMENTS:
-        ENVIRONMENTS["env_default"] = {
-            "name": "Default ComfyUI",
+    if not ENVIRONMENTS:
+        ENVIRONMENTS["env_stable"] = {
+            "name": "Stable",
             "type": "production",
-            "path": os.path.join(BASE_DIR, "ComfyUI").replace("\\", "/"),
-            "memo": "Default built-in installation"
+            "path": "envs/stable/ComfyUI",
+            "python_path": "envs/stable/python_embeded/python.exe",
+            "memo": "안정 버전 (기본)"
         }
 
 def save_envs():
@@ -150,9 +151,17 @@ def duplicate_environment(env_id):
     save_envs()
     return True, f"Environment cloned successfully!\nNew path: {new_path}\nPlease click Install on the new row to set it up."
 
+def _resolve_path(rel_or_abs):
+    """Resolve a path - if relative, resolve against BASE_DIR."""
+    if not rel_or_abs:
+        return ""
+    if os.path.isabs(rel_or_abs):
+        return rel_or_abs
+    return os.path.normpath(os.path.join(BASE_DIR, rel_or_abs))
+
 def get_comfy_path():
     env = get_active_env()
-    return env.get("path", os.path.join(BASE_DIR, "ComfyUI").replace("\\", "/"))
+    return _resolve_path(env.get("path", "envs/stable/ComfyUI"))
 
 def get_custom_nodes_path():
     return os.path.join(get_comfy_path(), "custom_nodes").replace("\\", "/")
@@ -164,36 +173,36 @@ def get_python_path():
     """Find a suitable Python for running ComfyUI.
     Search order:
     1. Explicit python_path from env config
-    2. python_embeded inside the ComfyUI env folder (reference project layout)
-    3. venv inside the ComfyUI env folder
-    4. python_embeded at project root (DSUComfyCG level)
+    2. python_embeded next to ComfyUI folder (reference project layout)
+    3. venv inside ComfyUI folder
+    4. python_embeded at project root
     5. System python
     """
     env = get_active_env()
     
     # 1) Explicit path from environment config
     if "python_path" in env and env["python_path"]:
-        p = env["python_path"]
+        p = _resolve_path(env["python_path"])
         if os.path.exists(p):
             return p
     
-    comfy_path = env.get("path", os.path.join(BASE_DIR, "ComfyUI"))
+    comfy_path = get_comfy_path()
     comfy_parent = os.path.dirname(comfy_path)
     
     # 2) python_embeded next to ComfyUI folder (reference project layout)
     embedded_next = os.path.join(comfy_parent, "python_embeded", "python.exe")
     if os.path.exists(embedded_next):
-        return embedded_next.replace("\\", "/")
+        return embedded_next
     
     # 3) venv inside ComfyUI folder
     venv_py = os.path.join(comfy_path, "venv", "Scripts", "python.exe")
     if os.path.exists(venv_py):
-        return venv_py.replace("\\", "/")
+        return venv_py
     
     # 4) python_embeded at project root
     root_embedded = os.path.join(BASE_DIR, "python_embeded", "python.exe")
     if os.path.exists(root_embedded):
-        return root_embedded.replace("\\", "/")
+        return root_embedded
     
     # 5) Fallback to system python
     import shutil
@@ -201,8 +210,21 @@ def get_python_path():
     if sys_py:
         return sys_py
     
-    # Absolute fallback (may not exist)
-    return os.path.join(BASE_DIR, "python_embeded", "python.exe").replace("\\", "/")
+    # Absolute fallback
+    return os.path.join(comfy_parent, "python_embeded", "python.exe")
+
+def get_env_dir(env_id=None):
+    """Get the environment directory (parent of ComfyUI folder) for a given env."""
+    if env_id:
+        env = ENVIRONMENTS.get(env_id, {})
+    else:
+        env = get_active_env()
+    comfy_path = _resolve_path(env.get("path", "envs/stable/ComfyUI"))
+    return os.path.dirname(comfy_path)
+
+def get_shared_models_path():
+    """Get the shared models directory."""
+    return os.path.join(BASE_DIR, "models")
 
 load_envs()
 # -----------------------------------------------
@@ -1469,22 +1491,33 @@ def run_comfyui():
         return False, err_msg
 
 
-def install_comfyui(progress_cb=None):
+def install_comfyui(env_name="stable", options=None, progress_cb=None):
     """
-    Full one-click ComfyUI installation using ComfyUI-Easy-Install.
-    Downloads the official Easy-Install package from Tavris1's GitHub releases,
-    which includes Python Embedded (with PyTorch+CUDA), ComfyUI, and all scripts.
-    Returns (success, message).
+    Full one-click ComfyUI installation matching ComfyUI-Easy-Install reference.
+    
+    Args:
+        env_name: Name of the environment ('stable', 'latest', etc.)
+        options: dict with optional settings:
+            - install_custom_nodes: list of (url, folder_name) tuples
+            - install_addons: list of addon names
+            - shared_models: bool, whether to link shared models folder
+        progress_cb: callable for progress messages
+    Returns: (success, message)
     """
     import shutil
     import zipfile
     import urllib.request
     
-    comfy_path = get_comfy_path()
-    comfy_parent = os.path.dirname(comfy_path)
+    if options is None:
+        options = {}
     
-    # If ComfyUI + python_embeded already exist, skip
-    python_exe = os.path.join(comfy_parent, "python_embeded", "python.exe")
+    # Setup paths
+    env_dir = os.path.join(BASE_DIR, "envs", env_name)
+    comfy_path = os.path.join(env_dir, "ComfyUI")
+    python_dir = os.path.join(env_dir, "python_embeded")
+    python_exe = os.path.join(python_dir, "python.exe")
+    
+    # Skip if already fully installed
     if os.path.exists(os.path.join(comfy_path, "main.py")) and os.path.exists(python_exe):
         return True, "ComfyUI is already installed."
     
@@ -1493,123 +1526,199 @@ def install_comfyui(progress_cb=None):
         if progress_cb:
             progress_cb(msg)
     
-    EASY_INSTALL_URL = "https://github.com/Tavris1/ComfyUI-Easy-Install/releases/latest/download/ComfyUI-Easy-Install.zip"
-    
-    # ── Step 1: Download ComfyUI-Easy-Install package ──
-    _progress("Step 1/3: Downloading ComfyUI-Easy-Install package (~43MB)...")
-    
-    os.makedirs(comfy_parent, exist_ok=True)
-    zip_path = os.path.join(comfy_parent, "ComfyUI-Easy-Install.zip")
-    
-    try:
-        def _reporthook(block_num, block_size, total_size):
-            downloaded = block_num * block_size
-            if total_size > 0:
-                pct = min(100, int(downloaded * 100 / total_size))
-                mb = downloaded / (1024 * 1024)
-                total_mb = total_size / (1024 * 1024)
-                if pct % 10 == 0 and progress_cb:
-                    progress_cb(f"  Downloading: {mb:.1f}/{total_mb:.1f} MB ({pct}%)")
-        
-        urllib.request.urlretrieve(EASY_INSTALL_URL, zip_path, _reporthook)
-    except Exception as e:
-        return False, f"다운로드 실패: {e}\n인터넷 연결을 확인해 주세요."
-    
-    if not os.path.exists(zip_path):
-        return False, "ComfyUI-Easy-Install.zip 다운로드에 실패했습니다."
-    
-    _progress("✓ Download complete.")
-    
-    # ── Step 2: Extract the package ──
-    _progress("Step 2/3: Extracting ComfyUI-Easy-Install...")
-    
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(comfy_parent)
-        os.remove(zip_path)
-    except Exception as e:
-        return False, f"압축 해제 실패: {e}"
-    
-    # The Easy-Install zip may contain a nested Helper-CEI.zip or a folder.
-    # Check for the nested structure and extract if needed.
-    helper_zip = os.path.join(comfy_parent, "Helper-CEI.zip")
-    if os.path.exists(helper_zip):
-        _progress("Extracting Helper-CEI.zip...")
+    def _run(cmd, cwd=None, timeout=600):
+        """Run a subprocess command, return (returncode, stdout)."""
         try:
-            with zipfile.ZipFile(helper_zip, 'r') as zf:
-                zf.extractall(comfy_parent)
-            os.remove(helper_zip)
-        except Exception as e:
-            logger.warning(f"Helper-CEI extraction warning: {e}")
-    
-    # Check if extraction created a subfolder like "ComfyUI-Easy-Install/"
-    # and move its contents up to comfy_parent level
-    easy_install_dir = os.path.join(comfy_parent, "ComfyUI-Easy-Install")
-    if os.path.isdir(easy_install_dir):
-        _progress("Reorganizing files...")
-        for item in os.listdir(easy_install_dir):
-            src = os.path.join(easy_install_dir, item)
-            dst = os.path.join(comfy_parent, item)
-            if not os.path.exists(dst):
-                shutil.move(src, dst)
-            elif os.path.isdir(src) and os.path.isdir(dst):
-                # Merge directories
-                for sub_item in os.listdir(src):
-                    sub_src = os.path.join(src, sub_item)
-                    sub_dst = os.path.join(dst, sub_item)
-                    if not os.path.exists(sub_dst):
-                        shutil.move(sub_src, sub_dst)
-        shutil.rmtree(easy_install_dir, ignore_errors=True)
-    
-    _progress("✓ Extraction complete.")
-    
-    # ── Step 3: Run the Easy-Install batch script ──
-    easy_install_bat = os.path.join(comfy_parent, "ComfyUI-Easy-Install.bat")
-    if os.path.exists(easy_install_bat):
-        _progress("Step 3/3: Running ComfyUI-Easy-Install.bat...")
-        try:
-            process = subprocess.Popen(
-                ["cmd.exe", "/c", easy_install_bat],
-                cwd=comfy_parent,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace',
+                cwd=cwd, timeout=timeout
             )
-            for line in iter(process.stdout.readline, ''):
-                line = line.strip()
-                if line and progress_cb:
-                    progress_cb(f"  {line[:120]}")
-            process.wait()
-            
-            if process.returncode != 0:
-                logger.warning(f"Easy-Install returned code {process.returncode}")
+            return result.returncode, result.stdout + result.stderr
         except Exception as e:
-            logger.warning(f"Easy-Install batch warning: {e}")
-    else:
-        _progress("Step 3/3: No Easy-Install.bat found. Checking installation...")
+            return -1, str(e)
     
-    # ── Verify installation ──
-    if os.path.exists(os.path.join(comfy_path, "main.py")):
-        # Copy our default workflows
-        source_workflows = os.path.join(BASE_DIR, "workflows")
-        target_workflows = os.path.join(comfy_path, "user", "default", "workflows")
-        if os.path.exists(source_workflows):
-            try:
-                os.makedirs(target_workflows, exist_ok=True)
-                for item in os.listdir(source_workflows):
-                    if item.endswith(".json"):
-                        shutil.copy2(os.path.join(source_workflows, item),
-                                    os.path.join(target_workflows, item))
-                _progress("✓ Default workflows copied.")
-            except Exception as e:
-                logger.warning(f"Failed to copy workflows: {e}")
-        
-        _progress("🎉 Installation complete! Click 'Run ComfyUI' to start.")
-        return True, "ComfyUI-Easy-Install 패키지로 설치가 완료되었습니다!\nPython + PyTorch + ComfyUI가 모두 포함되어 있습니다.\n\n'Run ComfyUI' 버튼을 눌러 실행하세요."
+    def _run_stream(cmd, cwd=None):
+        """Run a subprocess with streaming output to progress_cb."""
+        process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding='utf-8', errors='replace', cwd=cwd
+        )
+        for line in iter(process.stdout.readline, ''):
+            line = line.strip()
+            if line:
+                if 'Downloading' in line or 'Installing' in line or 'Successfully' in line or 'Cloning' in line:
+                    _progress(f"  {line[:120]}")
+        process.wait()
+        return process.returncode
+    
+    PIP_ARGS = "--no-cache-dir --no-warn-script-location --timeout=1000 --retries 10"
+    UV_ARGS = "--no-cache --link-mode=copy"
+    
+    os.makedirs(env_dir, exist_ok=True)
+    
+    # ── Step 1: Clone ComfyUI ──
+    if not os.path.exists(os.path.join(comfy_path, "main.py")):
+        _progress("Step 1/7: Cloning ComfyUI...")
+        rc = _run_stream(["git", "clone", "https://github.com/Comfy-Org/ComfyUI", comfy_path])
+        if rc != 0:
+            return False, "ComfyUI 클론에 실패했습니다. Git이 설치되어 있는지 확인해 주세요."
+        _progress("✓ ComfyUI cloned.")
     else:
-        return False, f"설치는 완료되었으나 ComfyUI main.py를 찾을 수 없습니다.\n경로: {comfy_path}\n\n수동으로 확인해 주세요."
+        _progress("Step 1/7: ComfyUI already exists. Skipping.")
+    
+    # ── Step 2: Download Python 3.12.10 Embedded ──
+    if not os.path.exists(python_exe):
+        _progress("Step 2/7: Downloading Python 3.12.10 Embedded...")
+        os.makedirs(python_dir, exist_ok=True)
+        py_url = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+        py_zip = os.path.join(python_dir, "python-3.12.10-embed-amd64.zip")
+        try:
+            urllib.request.urlretrieve(py_url, py_zip)
+        except Exception as e:
+            return False, f"Python 다운로드 실패: {e}"
+        try:
+            with zipfile.ZipFile(py_zip, 'r') as zf:
+                zf.extractall(python_dir)
+            os.remove(py_zip)
+        except Exception as e:
+            return False, f"Python 압축 해제 실패: {e}"
+        _progress("✓ Python 3.12.10 Embedded installed.")
+    else:
+        _progress("Step 2/7: Python Embedded already exists. Skipping.")
+    
+    # ── Step 3: Configure python312._pth (match reference exactly) ──
+    _progress("Step 3/7: Configuring Python paths...")
+    pth_file = os.path.join(python_dir, "python312._pth")
+    with open(pth_file, 'w') as f:
+        f.write("../ComfyUI\npython312.zip\n.\nLib/site-packages\nLib\nScripts\n# import site\n")
+    
+    # ── Step 4: Configure pip.ini (trusted-host) ──
+    pip_ini = os.path.join(python_dir, "pip.ini")
+    with open(pip_ini, 'w') as f:
+        f.write("[global]\ntrusted-host =\n    pypi.org\n    files.pythonhosted.org\n    pypi.python.org\n")
+    _progress("✓ Python configuration done.")
+    
+    # ── Step 5: Install pip + uv ──
+    _progress("Step 5/7: Installing pip + uv...")
+    get_pip_py = os.path.join(python_dir, "get-pip.py")
+    try:
+        urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_py)
+    except Exception as e:
+        return False, f"get-pip.py 다운로드 실패: {e}"
+    _run([python_exe, "-I", get_pip_py] + PIP_ARGS.split(), cwd=python_dir)
+    _run([python_exe, "-I", "-m", "pip", "install", "uv==0.9.7"] + PIP_ARGS.split())
+    _progress("✓ pip + uv installed.")
+    
+    # ── Step 6: Install PyTorch 2.9.1 + CUDA 13.0 ──
+    _progress("Step 6/7: Installing PyTorch 2.9.1 + CUDA 13.0 (~2.5GB)...")
+    torch_cmd = [
+        python_exe, "-I", "-m", "pip", "install",
+        "torch==2.9.1", "torchvision==0.24.1", "torchaudio==2.9.1",
+        "--index-url", "https://download.pytorch.org/whl/cu130",
+    ] + PIP_ARGS.split()
+    rc = _run_stream(torch_cmd)
+    if rc != 0:
+        return False, "PyTorch 설치 실패. 인터넷 연결과 디스크 공간을 확인해 주세요."
+    _progress("✓ PyTorch + CUDA installed.")
+    
+    # ── Step 7: Install ComfyUI requirements + pygit2 + av ──
+    _progress("Step 7/7: Installing ComfyUI dependencies...")
+    req_file = os.path.join(comfy_path, "requirements.txt")
+    if os.path.exists(req_file):
+        _run([python_exe, "-I", "-m", "uv", "pip", "install", "pygit2"] + UV_ARGS.split())
+        _run([python_exe, "-I", "-m", "uv", "pip", "install", "av==16.0.1"] + UV_ARGS.split())
+        _run([python_exe, "-I", "-m", "uv", "pip", "install", "-r", req_file] + UV_ARGS.split(), cwd=comfy_path)
+    _progress("✓ ComfyUI dependencies installed.")
+    
+    # ── Optional: Custom nodes ──
+    custom_nodes = options.get("install_custom_nodes", [])
+    if custom_nodes:
+        cn_dir = os.path.join(comfy_path, "custom_nodes")
+        os.makedirs(cn_dir, exist_ok=True)
+        for i, (url, folder) in enumerate(custom_nodes):
+            _progress(f"Installing node {i+1}/{len(custom_nodes)}: {folder}...")
+            target = os.path.join(cn_dir, folder)
+            if not os.path.exists(target):
+                _run(["git", "clone", url, target])
+                node_req = os.path.join(target, "requirements.txt")
+                if os.path.exists(node_req) and os.path.getsize(node_req) > 0:
+                    _run([python_exe, "-I", "-m", "uv", "pip", "install", "-r", node_req] + UV_ARGS.split())
+        _progress(f"✓ {len(custom_nodes)} custom nodes installed.")
+    
+    # ── Optional: Addon packages ──
+    addons = options.get("install_addons", [])
+    for addon in addons:
+        _progress(f"Installing addon: {addon}...")
+        if addon == "onnxruntime-gpu":
+            _run([python_exe, "-I", "-m", "uv", "pip", "install", "onnxruntime-gpu"] + UV_ARGS.split())
+        elif addon == "triton":
+            _run([python_exe, "-I", "-m", "pip", "install", "--upgrade", "--force-reinstall", "triton-windows<3.6"] + PIP_ARGS.split())
+    
+    # ── Setup shared models via extra_model_paths.yaml ──
+    if options.get("shared_models", True):
+        shared_models = get_shared_models_path()
+        os.makedirs(shared_models, exist_ok=True)
+        for subdir in ["checkpoints", "loras", "vae", "clip", "unet", "controlnet",
+                       "clip_vision", "upscale_models", "embeddings"]:
+            os.makedirs(os.path.join(shared_models, subdir), exist_ok=True)
+        yaml_path = os.path.join(comfy_path, "extra_model_paths.yaml")
+        rel_models = os.path.relpath(shared_models, comfy_path).replace("\\", "/")
+        with open(yaml_path, 'w') as f:
+            f.write(f'dsu_shared:\n    base_path: "{rel_models}"\n')
+            for subdir in ["checkpoints", "loras", "vae", "clip", "unet", "controlnet",
+                           "clip_vision", "upscale_models", "embeddings"]:
+                f.write(f'    {subdir}: {subdir}\n')
+        _progress("✓ Shared models linked.")
+    
+    # ── Copy default workflows ──
+    source_wf = os.path.join(BASE_DIR, "workflows")
+    target_wf = os.path.join(comfy_path, "user", "default", "workflows")
+    if os.path.exists(source_wf):
+        import shutil as sh
+        os.makedirs(target_wf, exist_ok=True)
+        for item in os.listdir(source_wf):
+            if item.endswith(".json"):
+                sh.copy2(os.path.join(source_wf, item), os.path.join(target_wf, item))
+        _progress("✓ Default workflows copied.")
+    
+    # ── Register environment ──
+    env_id = f"env_{env_name}"
+    ENVIRONMENTS[env_id] = {
+        "name": env_name.capitalize(),
+        "type": "production" if env_name == "stable" else "development",
+        "path": f"envs/{env_name}/ComfyUI",
+        "python_path": f"envs/{env_name}/python_embeded/python.exe",
+        "installed_addons": addons,
+        "installed_nodes": [f for _, f in custom_nodes],
+        "memo": f"ComfyUI {env_name}"
+    }
+    global ACTIVE_ENV_ID
+    ACTIVE_ENV_ID = env_id
+    save_envs()
+    
+    _progress("🎉 Installation complete!")
+    return True, f"ComfyUI ({env_name}) 설치 완료!\nPython 3.12.10 + PyTorch 2.9.1 + CUDA 13.0\n\n'Run ComfyUI' 버튼을 눌러 실행하세요."
+
+
+# Default custom nodes from Easy-Install reference
+DEFAULT_CUSTOM_NODES = [
+    ("https://github.com/Comfy-Org/ComfyUI-Manager", "comfyui-manager"),
+    ("https://github.com/yolain/ComfyUI-Easy-Use", "ComfyUI-Easy-Use"),
+    ("https://github.com/Fannovel16/comfyui_controlnet_aux", "comfyui_controlnet_aux"),
+    ("https://github.com/rgthree/rgthree-comfy", "rgthree-comfy"),
+    ("https://github.com/MohammadAboulEla/ComfyUI-iTools", "comfyui-itools"),
+    ("https://github.com/city96/ComfyUI-GGUF", "ComfyUI-GGUF"),
+    ("https://github.com/gseth/ControlAltAI-Nodes", "controlaltai-nodes"),
+    ("https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch", "comfyui-inpaint-cropandstitch"),
+    ("https://github.com/1038lab/ComfyUI-RMBG", "comfyui-rmbg"),
+    ("https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite", "comfyui-videohelpersuite"),
+    ("https://github.com/shiimizu/ComfyUI-TiledDiffusion", "ComfyUI-TiledDiffusion"),
+    ("https://github.com/kijai/ComfyUI-KJNodes", "comfyui-kjnodes"),
+    ("https://github.com/kijai/ComfyUI-WanVideoWrapper", "ComfyUI-WanVideoWrapper"),
+    ("https://github.com/1038lab/ComfyUI-QwenVL", "ComfyUI-QwenVL"),
+    ("https://github.com/kijai/ComfyUI-WanAnimatePreprocess", "ComfyUI-WanAnimatePreprocess"),
+]
 
 
 # =============================================================================

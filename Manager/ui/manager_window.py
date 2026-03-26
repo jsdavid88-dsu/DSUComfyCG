@@ -38,6 +38,7 @@ from core.search_engines import load_settings, save_settings, get_api_key, set_a
 from core.aria2_downloader import is_aria2_available
 from ui.url_input_dialog import ModelUrlInputDialog
 from ui.workflow_validator import WorkflowValidatorDialog
+from ui.install_dialog import InstallDialog
 
 class SearchWorker(QThread):
     finished = Signal(list)
@@ -1966,27 +1967,12 @@ class ManagerWindow(QMainWindow):
             self.run_btn.setEnabled(True)
     
     def handle_install_action(self):
-        """Handle ComfyUI Core Installation."""
-        reply = QMessageBox.question(
-            self, "ComfyUI 설치",
-            "ComfyUI 코어를 설치하시겠습니까?\n이 컴퓨터에 Git이 설치되어 있어야 합니다.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if reply == QMessageBox.Yes:
-            self.install_btn.setEnabled(False)
-            self.install_btn.setText("Installing...")
-            QApplication.processEvents()
-            
-            success, msg = install_comfyui()
-            if success:
-                QMessageBox.information(self, "설치 완료", "ComfyUI가 성공적으로 설치되었습니다!\n\n앱을 재시작해주세요.")
-                self.refresh_system_status()
-                self.install_btn.setText("📥 Install ComfyUI")
-                self.install_btn.setEnabled(True)
-            else:
-                QMessageBox.warning(self, "설치 실패", f"설치 중 오류가 발생했습니다:\n{msg}")
-                self.install_btn.setText("📥 Install ComfyUI")
-                self.install_btn.setEnabled(True)
+        """Handle ComfyUI Core Installation - opens the install dialog."""
+        dialog = InstallDialog(self)
+        dialog.exec()
+        # Refresh status after dialog closes
+        self.update_system_status()
+        self.refresh_system_status()
 
     def handle_comfy_action(self):
         """Handle Run ComfyUI."""
