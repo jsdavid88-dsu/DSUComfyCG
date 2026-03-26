@@ -1990,10 +1990,11 @@ class ManagerWindow(QMainWindow):
 
     def handle_comfy_action(self):
         """Handle Run ComfyUI."""
-        if run_comfyui():
+        success, msg = run_comfyui()
+        if success:
             QMessageBox.information(self, "ComfyUI", "ComfyUI is starting!\n\nhttp://localhost:8188")
         else:
-            QMessageBox.warning(self, "Error", "Failed to start ComfyUI")
+            QMessageBox.warning(self, "Error", msg)
     
     def refresh_system_status(self):
         """Refresh system status panel with current info."""

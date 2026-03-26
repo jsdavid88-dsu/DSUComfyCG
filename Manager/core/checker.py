@@ -161,9 +161,47 @@ def get_models_path():
     return os.path.join(get_comfy_path(), "models").replace("\\", "/")
 
 def get_python_path():
+    """Find a suitable Python for running ComfyUI.
+    Search order:
+    1. Explicit python_path from env config
+    2. python_embeded inside the ComfyUI env folder (reference project layout)
+    3. venv inside the ComfyUI env folder
+    4. python_embeded at project root (DSUComfyCG level)
+    5. System python
+    """
     env = get_active_env()
+    
+    # 1) Explicit path from environment config
     if "python_path" in env and env["python_path"]:
-        return env["python_path"]
+        p = env["python_path"]
+        if os.path.exists(p):
+            return p
+    
+    comfy_path = env.get("path", os.path.join(BASE_DIR, "ComfyUI"))
+    comfy_parent = os.path.dirname(comfy_path)
+    
+    # 2) python_embeded next to ComfyUI folder (reference project layout)
+    embedded_next = os.path.join(comfy_parent, "python_embeded", "python.exe")
+    if os.path.exists(embedded_next):
+        return embedded_next.replace("\\", "/")
+    
+    # 3) venv inside ComfyUI folder
+    venv_py = os.path.join(comfy_path, "venv", "Scripts", "python.exe")
+    if os.path.exists(venv_py):
+        return venv_py.replace("\\", "/")
+    
+    # 4) python_embeded at project root
+    root_embedded = os.path.join(BASE_DIR, "python_embeded", "python.exe")
+    if os.path.exists(root_embedded):
+        return root_embedded.replace("\\", "/")
+    
+    # 5) Fallback to system python
+    import shutil
+    sys_py = shutil.which("python")
+    if sys_py:
+        return sys_py
+    
+    # Absolute fallback (may not exist)
     return os.path.join(BASE_DIR, "python_embeded", "python.exe").replace("\\", "/")
 
 load_envs()
@@ -1406,15 +1444,29 @@ def sync_workflows():
 
 def run_comfyui():
     """Launch ComfyUI."""
+    python_path = get_python_path()
+    comfy_main = os.path.join(get_comfy_path(), "main.py")
+    
+    if not os.path.exists(python_path):
+        logger.error(f"Python not found at: {python_path}")
+        logger.error("ComfyUI requires a Python with PyTorch installed.")
+        logger.error("Please install Python+PyTorch via the reference project or manually.")
+        return False, f"Python을 찾을 수 없습니다: {python_path}\n\nComfyUI를 실행하려면 PyTorch가 설치된 Python이 필요합니다.\n\n해결 방법:\n1. Help/Settings 탭에서 Python 경로를 직접 지정하거나\n2. ComfyUI-Easy-Install로 설치한 python_embeded 폴더를 이 프로젝트 폴더에 복사하세요."
+    
+    if not os.path.exists(comfy_main):
+        logger.error(f"ComfyUI main.py not found at: {comfy_main}")
+        return False, f"ComfyUI main.py를 찾을 수 없습니다: {comfy_main}"
+    
     try:
         subprocess.Popen(
-            [get_python_path(), "-I", os.path.join(get_comfy_path(), "main.py"), "--windows-standalone-build"],
-            cwd=BASE_DIR
+            [python_path, "-I", comfy_main, "--windows-standalone-build"],
+            cwd=os.path.dirname(get_comfy_path())
         )
-        return True
+        return True, "ComfyUI가 시작되었습니다!"
     except Exception as e:
-        logger.error(f"Failed to start ComfyUI: {e}")
-        return False
+        err_msg = f"Failed to start ComfyUI: {e}"
+        logger.error(err_msg)
+        return False, err_msg
 
 
 def install_comfyui(progress_cb=None):
