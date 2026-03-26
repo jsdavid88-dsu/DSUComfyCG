@@ -89,4 +89,9 @@ def install_addon(addon_id, python_executable, comfy_path, callback=None):
             
         return True, "FlashAttention Installed Successfully."
 
+    elif addon_id == "onnxruntime-gpu":
+        if not _run_pip(["onnxruntime-gpu"], "ONNX Runtime GPU"):
+            return False, "Failed to install ONNX Runtime GPU."
+        return True, "ONNX Runtime GPU Installed Successfully."
+
     return False, "Unknown addon requested."

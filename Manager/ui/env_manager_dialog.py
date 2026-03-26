@@ -139,12 +139,15 @@ class EnvManagerDialog(QDialog):
                 QPushButton:hover { background-color: #f1f5f9; color: #0f172a; }
             """
             
-            # 1. Install Action
+            # 1. Install or Update Action
             install_btn = QPushButton()
             if os.path.exists(os.path.join(edata.get("path", ""), "main.py")):
-                install_btn.setText("Installed")
-                install_btn.setEnabled(False)
-                install_btn.setStyleSheet("QPushButton { background-color: transparent; color: #94a3b8; border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px 12px; font-weight: bold; font-size: 12px; }")
+                install_btn.setText("Update")
+                install_btn.setStyleSheet("""
+                    QPushButton { background-color: #f0fdfa; color: #0d9488; border: 1px solid #5eead4; border-radius: 6px; padding: 6px 12px; font-weight: bold; font-size: 12px; }
+                    QPushButton:hover { background-color: #ccfbf1; }
+                """)
+                install_btn.clicked.connect(lambda _, eid=env_id: self._update_env(eid, install_btn))
             else:
                 install_btn.setText("Install")
                 install_btn.setStyleSheet("""
@@ -195,28 +198,46 @@ class EnvManagerDialog(QDialog):
         self.table.blockSignals(False)
 
     def _install_env(self, target_env_id):
-        from core.checker import set_active_env, install_comfyui
+        from ui.install_dialog import InstallDialog
+        dlg = InstallDialog(self)
+        name = target_env_id.replace("env_", "")
+        dlg.env_name_input.setText(name)
+        dlg.exec()
+        self.refresh_table()
+
+    def _update_env(self, env_id, btn):
+        from core.checker import set_active_env, update_comfyui, update_all_custom_nodes
         import core.checker
-        original_env_id = core.checker.ACTIVE_ENV_ID
         
         reply = QMessageBox.question(
-            self, "Install ComfyUI",
-            f"Install ComfyUI into environment '{target_env_id}'?\n\nThis will clone the repository. Git must be installed.",
+            self, f"Update Environment",
+            f"Update ComfyUI and custom nodes in '{env_id}'?\n\nThis will run git pull for ComfyUI and all nodes.",
             QMessageBox.Yes | QMessageBox.No
         )
         if reply == QMessageBox.Yes:
-            set_active_env(target_env_id)
-            # Temporarily disable this window so user can't click things
-            self.setEnabled(False)
-            success, msg = install_comfyui()
-            set_active_env(original_env_id)
-            self.setEnabled(True)
+            original_env_id = core.checker.ACTIVE_ENV_ID
+            set_active_env(env_id)
             
-            if success:
-                QMessageBox.information(self, "Success", "ComfyUI Installed successfully!")
-                self.refresh_table()
-            else:
-                QMessageBox.warning(self, "Failed", msg)
+            btn.setEnabled(False)
+            btn.setText("Updating...")
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+            
+            # Update ComfyUI
+            c_success, c_msg = update_comfyui()
+            
+            # Update nodes
+            s_count, f_count, _ = update_all_custom_nodes()
+            
+            set_active_env(original_env_id)
+            btn.setEnabled(True)
+            btn.setText("Update")
+            
+            msg = f"ComfyUI Update: {'Success' if c_success else 'Failed'}\nNodes Update: {s_count} succeeded, {f_count} failed"
+            if not c_success:
+                msg += f"\n\nError: {c_msg}"
+                
+            QMessageBox.information(self, "Update Complete", msg)
 
     def _open_folder(self, path):
         if not path or not os.path.exists(path):
@@ -288,9 +309,10 @@ class AdvancedAddonsDialog(QDialog):
         v_layout.setSpacing(10)
         
         addons = [
-            ("sageattention", "SageAttention (v2.2.0 & v3)", "Replaces standard attention backend, optimizing speed."),
+            ("sageattention", "SageAttention (v2 & v3)", "Replaces standard attention backend, optimizing speed."),
             ("flashattention", "FlashAttention (v2.8.3)", "Replaces standard attention for massive speedups."),
-            ("nunchaku", "Nunchaku", "Essential for certain customized rendering workflows.")
+            ("nunchaku", "Nunchaku", "Essential for certain customized rendering workflows."),
+            ("onnxruntime-gpu", "ONNX Runtime GPU", "GPU Acceleration for ONNX models.")
         ]
         
         for addon_id, name, description in addons:
@@ -403,50 +425,10 @@ class AdvancedAddonsDialog(QDialog):
             update_environment_field(env_id, column_map[item.column()], new_val)
 
     def _add_environment(self):
-        # Dialog for Name, Type
-        import string
-        import random
-        from PySide6.QtWidgets import QDialog, QFormLayout, QDialogButtonBox
-        
-        dlg = QDialog(self)
-        dlg.setWindowTitle("New Environment")
-        fl = QFormLayout(dlg)
-        
-        name_input = QLineEdit()
-        fl.addRow("Environment Name:", name_input)
-        
-        type_combo = QComboBox()
-        type_combo.addItems(["sandbox", "production"])
-        fl.addRow("Type:", type_combo)
-        
-        memo_input = QLineEdit()
-        fl.addRow("Memo:", memo_input)
-        
-        bbox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bbox.accepted.connect(dlg.accept)
-        bbox.rejected.connect(dlg.reject)
-        fl.addRow(bbox)
-        
-        if dlg.exec():
-            name = name_input.text().strip()
-            if not name:
-                QMessageBox.warning(self, "Error", "Name cannot be empty.")
-                return
-                
-            env_type = type_combo.currentText()
-            memo = memo_input.text()
-            
-            # Generate safe ID and path
-            safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', name)
-            env_id = f"env_{safe_name.lower()}_{''.join(random.choices(string.ascii_lowercase + string.digits, k=4))}"
-            
-            path = os.path.join(BASE_DIR, "envs", safe_name).replace("\\", "/")
-            
-            success, msg = add_environment(env_id, name, env_type, path, memo)
-            if success:
-                self.refresh_table()
-            else:
-                QMessageBox.warning(self, "Error", msg)
+        from ui.install_dialog import InstallDialog
+        dlg = InstallDialog(self)
+        dlg.exec()
+        self.refresh_table()
 
     def _remove_selected(self):
         row = self.table.currentRow()
