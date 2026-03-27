@@ -986,7 +986,7 @@ class ManagerWindow(QMainWindow):
     
     def _on_main_tab_changed(self, index):
         """Handle main tab change. Lazy-load model browser on first visit."""
-        if index == 1 and not self._all_browser_models:
+        if index == 2 and not self._all_browser_models:
             self._refresh_model_browser()
     
     def _refresh_model_browser(self):
@@ -1365,9 +1365,6 @@ class ManagerWindow(QMainWindow):
         # Check for updates
         self.check_version_updates()
         
-        # Connect tab change to lazy-load model browser
-        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
-        
         # Populate all models in the Tabular interface!
         self.populate_all_models_table()
         
@@ -1683,69 +1680,6 @@ class ManagerWindow(QMainWindow):
         
         self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
 
-    def _on_model_selected(self, current, previous):
-        """Update Model Details panel when a model is selected."""
-        if not current:
-            self.detail_name.setText("선택된 모델 없음")
-            self.detail_status.setText("")
-            self.detail_info.setText("모델 트리를 클릭하여 상세 정보를 확인하세요.")
-            self.source_widget.hide()
-            self.actions_widget.hide()
-            self.search_results_list.hide()
-            return
-            
-        model = current.data(0, Qt.UserRole)
-        if not model:
-            return
-            
-        self.detail_name.setText(model["name"])
-        
-        info_lines = []
-        info_lines.append(f"<b>대상 폴더:</b> {model['folder']}")
-        
-        confidence = 0.0
-        method = ""
-        url = None
-        
-        if isinstance(model.get("url"), dict):
-            url_info = model["url"]
-            url = url_info.get("url")
-            confidence = url_info.get("_confidence", 0.0)
-            method = url_info.get("_method", "")
-            if "description" in url_info:
-                info_lines.append(f"<b>설명:</b> {url_info['description']}")
-            info_lines.append(f"<b>소스 URL:</b> <a href='{url}'>{url}</a>")
-            info_lines.append(f"<b>매치 신뢰도:</b> {confidence*100:.0f}% ({method})")
-            
-            # Show cached badge if loaded from cache
-            if url_info.get("source") in ["usage_cache", "model_metadata"]:
-                info_lines.append("<i>(캐시된 로컬 데이터 활용됨)</i>")
-                
-        elif isinstance(model.get("info"), dict):
-            url_info = model["info"]
-            confidence = url_info.get("_confidence", 0.0)
-            method = url_info.get("_method", "")
-            if "description" in url_info:
-                info_lines.append(f"<b>설명:</b> {url_info['description']}")
-            info_lines.append(f"<b>출처:</b> {method}")
-            
-        if model["installed"]:
-            self.detail_status.setText("<span style='color:#10b981; font-weight: bold;'>✓ 시스템에 설치됨</span>")
-            self.source_widget.hide()
-            self.actions_widget.hide()
-        elif url:
-            self.detail_status.setText("<span style='color:#3b82f6; font-weight: bold;'>⏳ 다운로드 대기 중</span>")
-            self.source_widget.hide()
-            self.actions_widget.hide()
-        else:
-            self.detail_status.setText("<span style='color:#f59e0b; font-weight: bold;'>❓ 소스 알 수 없음</span>")
-            self.source_input.clear()
-            self.source_widget.show()
-            self.actions_widget.show()
-            
-        self.detail_info.setText("<br>".join(info_lines))
-        self.search_results_list.hide()
-        
     def _save_manual_source(self):
         """Save manually entered URL for the selected unknown model."""
         url = self.source_input.text().strip()
@@ -1770,61 +1704,17 @@ class ManagerWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "저장 실패", msg)
             
-    def _run_advanced_search(self):
-        """Run Tavily advanced search in background."""
-        row = self.models_table.currentRow()
-        if row < 0:
-            return
-
-        item = self.models_table.item(row, 0)
-        if not item:
-            return
-        model = {"name": item.text()}
-        api_key = get_api_key("tavily_api_key")
-        if not api_key:
-            QMessageBox.information(self, "API Key 필요", "고급 검색을 사용하려면 설정 탭에서 Tavily API 키를 입력해주세요.")
-            self.main_tabs.setCurrentIndex(2)
-            return
-            
-        self.adv_search_btn.setText("검색 중...")
-        self.adv_search_btn.setEnabled(False)
-        self.search_results_list.clear()
-        
-        self._search_worker = SearchWorker(model["name"], api_key)
-        self._search_worker.finished.connect(self._on_search_finished)
-        self._search_worker.start()
-        
-    def _on_search_finished(self, results):
-        self.adv_search_btn.setText("✨ Advanced Search (Tavily)")
-        self.adv_search_btn.setEnabled(True)
-        
-        self.search_results_list.clear()
-        if not results:
-            self.search_results_list.addItem("검색 결과가 없습니다.")
-            self.search_results_list.show()
-            return
-            
-        for res in results:
-            title = res.get("title", "No Title")
-            url = res.get("url", "")
-            item = QListWidgetItem(f"{title}\n🔗 {url}")
-            item.setData(Qt.UserRole, url)
-            self.search_results_list.addItem(item)
-            
-        self.search_results_list.show()
-        
-    def _apply_search_result(self, item):
-        """When a search result is double clicked, use its URL."""
-        url = item.data(Qt.UserRole)
-        if url:
-            self.source_input.setText(url)
-            
     def install_all_missing(self):
         """1-Click Install All functionality for missing nodes and models with URLs."""
-        if not hasattr(self, 'current_workflow') or not self.current_workflow:
+        # Get currently selected workflow
+        current_item = self.workflow_list.currentItem()
+        if not current_item:
             return
-            
-        deps = check_workflow_dependencies(self.current_workflow)
+        current_workflow = current_item.data(Qt.UserRole)
+        if not current_workflow:
+            return
+
+        deps = check_workflow_dependencies(current_workflow)
         items_added = 0
         
         # Add missing nodes with URLs

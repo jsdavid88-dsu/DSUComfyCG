@@ -167,12 +167,12 @@ def download_with_aria2(url, target_path, progress_callback=None,
 
 def _parse_size(value, unit):
     """Convert aria2c size notation to bytes."""
-    unit = unit.upper().replace("I", "i")
+    unit = unit.strip()
     multipliers = {
-        "B": 1,
-        "KB": 1024, "KiB": 1024,
-        "MB": 1024**2, "MiB": 1024**2,
-        "GB": 1024**3, "GiB": 1024**3,
+        "B": 1, "b": 1,
+        "KB": 1024, "KiB": 1024, "kb": 1024, "kib": 1024,
+        "MB": 1024**2, "MiB": 1024**2, "mb": 1024**2, "mib": 1024**2,
+        "GB": 1024**3, "GiB": 1024**3, "gb": 1024**3, "gib": 1024**3,
     }
     return int(value * multipliers.get(unit, 1))
 

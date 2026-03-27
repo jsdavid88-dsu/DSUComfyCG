@@ -387,7 +387,7 @@ def read_extra_model_paths():
                         if isinstance(paths, str): paths = [paths]
                         for p in paths:
                             full_path = p if os.path.isabs(p) else os.path.join(base, p)
-                            EXTRA_MODEL_PATHS.setdefault(mtype, []).append(full_path.replace('\\\\', '/'))
+                            EXTRA_MODEL_PATHS.setdefault(mtype, []).append(full_path.replace('\\', '/'))
     except Exception as e:
         logger.warning(f'Failed to read extra paths: {e}')
     return EXTRA_MODEL_PATHS
@@ -1186,11 +1186,18 @@ def check_model_installed(model_name):
     
     # Search all model directories (including extra paths)
     search_paths = [get_models_path()]
-    for extra_path in EXTRA_MODEL_PATHS.values():
-        if os.path.isabs(extra_path):
-            search_paths.append(extra_path)
+    for extra_paths in EXTRA_MODEL_PATHS.values():
+        if isinstance(extra_paths, list):
+            for ep in extra_paths:
+                if os.path.isabs(ep):
+                    search_paths.append(ep)
+                else:
+                    search_paths.append(os.path.join(BASE_DIR, ep))
         else:
-            search_paths.append(os.path.join(BASE_DIR, extra_path))
+            if os.path.isabs(extra_paths):
+                search_paths.append(extra_paths)
+            else:
+                search_paths.append(os.path.join(BASE_DIR, extra_paths))
     
     for search_path in search_paths:
         if not os.path.exists(search_path):
@@ -2170,13 +2177,17 @@ def load_extra_model_paths():
             for key, path in paths.items():
                 if key in ("base_path", "is_default"):
                     continue
-                if base_path and not os.path.isabs(path):
-                    full_path = os.path.join(base_path, path)
-                else:
-                    full_path = path
-                
-                if key not in EXTRA_MODEL_PATHS:
-                    EXTRA_MODEL_PATHS[key] = full_path
+                if isinstance(path, str):
+                    path = [path]
+                if not isinstance(path, list):
+                    continue
+                for p in path:
+                    if base_path and not os.path.isabs(p):
+                        full_path = os.path.join(base_path, p)
+                    else:
+                        full_path = p
+                    full_path = full_path.replace('\\', '/')
+                    EXTRA_MODEL_PATHS.setdefault(key, []).append(full_path)
                     logger.info(f"[ExtraPath] {key} → {full_path}")
         
         logger.info(f"Loaded {len(EXTRA_MODEL_PATHS)} extra model paths")
@@ -2300,10 +2311,17 @@ def get_all_installed_models():
     
     # Add extra model paths
     for key, extra_path in EXTRA_MODEL_PATHS.items():
-        if os.path.isabs(extra_path):
-            search_paths.append((extra_path, f"[{key}] "))
+        if isinstance(extra_path, list):
+            for ep in extra_path:
+                if os.path.isabs(ep):
+                    search_paths.append((ep, f"[{key}] "))
+                else:
+                    search_paths.append((os.path.join(BASE_DIR, ep), f"[{key}] "))
         else:
-            search_paths.append((os.path.join(BASE_DIR, extra_path), f"[{key}] "))
+            if os.path.isabs(extra_path):
+                search_paths.append((extra_path, f"[{key}] "))
+            else:
+                search_paths.append((os.path.join(BASE_DIR, extra_path), f"[{key}] "))
     
     MODEL_EXTENSIONS = {'.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf'}
     

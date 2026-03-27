@@ -27,8 +27,8 @@ def main():
         env_dialog.exec()
         
         # After closing, ensure the active environment relies on the newly created one (if any)
-        window._on_env_changed()
-        window.update_run_button_state()
+        window._on_env_changed(window.env_combo.currentIndex())
+        window.update_system_status()
     
     sys.exit(app.exec())
 

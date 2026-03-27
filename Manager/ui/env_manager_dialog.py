@@ -278,6 +278,38 @@ class EnvManagerDialog(QDialog):
         else:
             QMessageBox.warning(self, "Failed", msg)
 
+    def _on_item_changed(self, item):
+        column_map = {1: "name", 2: "type", 4: "memo"}
+        if item.column() in column_map:
+            env_id = self.table.item(item.row(), 0).text()
+            new_val = item.text().strip()
+            from core.checker import update_environment_field
+            update_environment_field(env_id, column_map[item.column()], new_val)
+
+    def _add_environment(self):
+        from ui.install_dialog import InstallDialog
+        dlg = InstallDialog(self)
+        dlg.exec()
+        self.refresh_table()
+
+    def _remove_selected(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+
+        env_id = self.table.item(row, 0).text()
+        if env_id == "env_default":
+            QMessageBox.warning(self, "Deny", "Cannot remove the default environment.")
+            return
+
+        btn = QMessageBox.question(self, "Confirm", f"Remove environment {env_id} from registry?\nNote: This will not delete the folder on disk.", QMessageBox.Yes | QMessageBox.No)
+        if btn == QMessageBox.Yes:
+            success, msg = remove_environment(env_id)
+            if success:
+                self.refresh_table()
+            else:
+                QMessageBox.warning(self, "Error", msg)
+
     def _open_addons_dialog(self, env_id):
         dialog = AdvancedAddonsDialog(env_id, self)
         dialog.exec()
@@ -416,34 +448,3 @@ class AdvancedAddonsDialog(QDialog):
         self.worker.finished_signal.connect(_on_finish)
         self.worker.start()
 
-    def _on_item_changed(self, item):
-        column_map = {1: "name", 2: "type", 4: "memo"}
-        if item.column() in column_map:
-            env_id = self.table.item(item.row(), 0).text()
-            new_val = item.text().strip()
-            from core.checker import update_environment_field
-            update_environment_field(env_id, column_map[item.column()], new_val)
-
-    def _add_environment(self):
-        from ui.install_dialog import InstallDialog
-        dlg = InstallDialog(self)
-        dlg.exec()
-        self.refresh_table()
-
-    def _remove_selected(self):
-        row = self.table.currentRow()
-        if row < 0:
-            return
-            
-        env_id = self.table.item(row, 0).text()
-        if env_id == "env_default":
-            QMessageBox.warning(self, "Deny", "Cannot remove the default environment.")
-            return
-            
-        btn = QMessageBox.question(self, "Confirm", f"Remove environment {env_id} from registry?\nNote: This will not delete the folder on disk.", QMessageBox.Yes | QMessageBox.No)
-        if btn == QMessageBox.Yes:
-            success, msg = remove_environment(env_id)
-            if success:
-                self.refresh_table()
-            else:
-                QMessageBox.warning(self, "Error", msg)

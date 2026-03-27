@@ -34,7 +34,6 @@ class WorkflowValidatorDialog(QDialog):
         self.all_resolved = False
         
         self.setWindowTitle("워크플로우 의존성 검증")
-        self.setMinimumSize(700, 500)
         self.setMinimumSize(750, 600)
         self.setStyleSheet("""
             QDialog {
