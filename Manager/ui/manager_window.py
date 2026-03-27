@@ -1383,14 +1383,23 @@ class ManagerWindow(QMainWindow):
 
     
     def check_version_updates(self):
-        """Check for app updates and update UI."""
+        """Check for app updates in background thread."""
         local_version = get_local_version()
         self.version_label.setText(f"v{local_version}")
-        
-        # Check in background (non-blocking)
-        try:
-            update_available, local_ver, remote_ver, error = check_for_updates()
-            
+
+        from PySide6.QtCore import QThread, Signal
+
+        class UpdateCheckWorker(QThread):
+            result_signal = Signal(bool, str, str, str)
+
+            def run(self):
+                try:
+                    update_available, local_ver, remote_ver, error = check_for_updates()
+                    self.result_signal.emit(update_available, local_ver or "", remote_ver or "", error or "")
+                except Exception as e:
+                    self.result_signal.emit(False, "", "", str(e))
+
+        def _on_update_check_done(update_available, local_ver, remote_ver, error):
             if error:
                 self.version_label.setToolTip(f"Update check failed: {error}")
             elif update_available:
@@ -1400,8 +1409,10 @@ class ManagerWindow(QMainWindow):
                 self.status_bar.showMessage(f"Update available: v{remote_ver}", 5000)
             else:
                 self.version_label.setToolTip("You're on the latest version")
-        except Exception as e:
-            self.version_label.setToolTip(f"Update check error: {e}")
+
+        self._update_worker = UpdateCheckWorker()
+        self._update_worker.result_signal.connect(_on_update_check_done)
+        self._update_worker.start()
     
     def handle_update(self):
         """Handle update button click."""
@@ -1603,7 +1614,7 @@ class ManagerWindow(QMainWindow):
         for i, model in enumerate(deps["models"]):
             self.models_table.insertRow(i)
             name = model["name"]
-            folder = model["folder"]
+            folder = model["subfolder"]
             is_installed = model["installed"]
             url_info = model.get("url") or model.get("info")
             url = ""
@@ -1658,12 +1669,12 @@ class ManagerWindow(QMainWindow):
             
             if not is_installed and url:
                 downloadable += 1
-                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
+                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
             elif not url:
                 btn.setText("Manual URL")
                 btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
             else:
-                btn.clicked.connect(lambda c, m=model: self.add_model_to_queue(m))
+                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
                 
             action_layout.addWidget(btn)
             self.models_table.setCellWidget(i, 5, action_widget)
@@ -1680,37 +1691,16 @@ class ManagerWindow(QMainWindow):
         
         self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
 
-    def _save_manual_source(self):
-        """Save manually entered URL for the selected unknown model."""
-        url = self.source_input.text().strip()
-        if not url:
-            return
-            
-        row = self.models_table.currentRow()
-        if row < 0:
-            return
-            
-        item = self.models_table.item(row, 0)
-        if not item:
-            return
-        model_name = item.text()
-        folder = guess_model_folder(model_name)
-        
-        success, msg = save_url_to_model_db(model_name, url, folder)
-        if success:
-            self.status_bar.showMessage(f"직접 저장됨: {model_name}")
-            self.add_model_to_queue(model_name, url)
-            self.populate_all_models_table()
-        else:
-            QMessageBox.warning(self, "저장 실패", msg)
-            
     def install_all_missing(self):
         """1-Click Install All functionality for missing nodes and models with URLs."""
         # Get currently selected workflow
-        current_item = self.workflow_list.currentItem()
-        if not current_item:
+        row = self.workflow_list_table.currentRow()
+        if row < 0:
             return
-        current_workflow = current_item.data(Qt.UserRole)
+        item = self.workflow_list_table.item(row, 0)
+        if not item:
+            return
+        current_workflow = item.data(Qt.UserRole)
         if not current_workflow:
             return
 
@@ -1721,7 +1711,7 @@ class ManagerWindow(QMainWindow):
         for node in deps["nodes"]:
             if not node["installed"] and node["folder"] != "Builtin" and node["url"]:
                 # Check if already in queue to avoid duplicates
-                if not any(n["url"] == node["url"] for n in self.queue_nodes):
+                if not any(n[0] == node["url"] for n in self.queue_nodes):
                     self.add_node_to_queue(node["url"], node["folder"])
                     items_added += 1
                     
@@ -1729,7 +1719,7 @@ class ManagerWindow(QMainWindow):
         for model in deps["models"]:
             if not model["installed"] and model["url"]:
                 # Check if already in queue
-                if not any(m["name"] == model["name"] for m in self.queue_models):
+                if not any(m[0] == model["name"] for m in self.queue_models):
                     self.add_model_to_queue(model["name"], model["url"])
                     items_added += 1
                     
