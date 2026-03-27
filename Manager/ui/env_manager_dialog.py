@@ -7,7 +7,15 @@ from PySide6.QtWidgets import (
     QWidget, QMenu, QTextEdit
 )
 from PySide6.QtCore import Qt
-from core.checker import ENVIRONMENTS, ACTIVE_ENV_ID, add_environment, remove_environment, update_environment_memo, BASE_DIR
+from core.checker import ENVIRONMENTS, ACTIVE_ENV_ID, add_environment, remove_environment, BASE_DIR
+
+def _resolve_env_path(path):
+    """Resolve environment relative path against BASE_DIR."""
+    if not path:
+        return path
+    if os.path.isabs(path):
+        return path
+    return os.path.join(BASE_DIR, path)
 
 class EnvManagerDialog(QDialog):
     def __init__(self, parent=None):
@@ -141,7 +149,7 @@ class EnvManagerDialog(QDialog):
             
             # 1. Install or Update Action
             install_btn = QPushButton()
-            if os.path.exists(os.path.join(edata.get("path", ""), "main.py")):
+            if os.path.exists(os.path.join(_resolve_env_path(edata.get("path", "")), "main.py")):
                 install_btn.setText("Update")
                 install_btn.setStyleSheet("""
                     QPushButton { background-color: #f0fdfa; color: #0d9488; border: 1px solid #5eead4; border-radius: 6px; padding: 6px 12px; font-weight: bold; font-size: 12px; }
@@ -159,7 +167,7 @@ class EnvManagerDialog(QDialog):
             # 2. Open Folder
             open_btn = QPushButton("Open")
             open_btn.setStyleSheet(base_style)
-            open_btn.clicked.connect(lambda _, p=edata.get("path", ""): self._open_folder(p))
+            open_btn.clicked.connect(lambda _, p=_resolve_env_path(edata.get("path", "")): self._open_folder(p))
             
             # 3. Duplicate
             dup_btn = QPushButton("Copy")
@@ -208,36 +216,43 @@ class EnvManagerDialog(QDialog):
     def _update_env(self, env_id, btn):
         from core.checker import set_active_env, update_comfyui, update_all_custom_nodes
         import core.checker
-        
+
         reply = QMessageBox.question(
             self, f"Update Environment",
             f"Update ComfyUI and custom nodes in '{env_id}'?\n\nThis will run git pull for ComfyUI and all nodes.",
             QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.Yes:
-            original_env_id = core.checker.ACTIVE_ENV_ID
-            set_active_env(env_id)
-            
-            btn.setEnabled(False)
-            btn.setText("Updating...")
-            from PySide6.QtWidgets import QApplication
-            QApplication.processEvents()
-            
-            # Update ComfyUI
-            c_success, c_msg = update_comfyui()
-            
-            # Update nodes
-            s_count, f_count, _ = update_all_custom_nodes()
-            
+        if reply != QMessageBox.Yes:
+            return
+
+        original_env_id = core.checker.ACTIVE_ENV_ID
+        set_active_env(env_id)
+
+        btn.setEnabled(False)
+        btn.setText("Updating...")
+
+        from PySide6.QtCore import QThread, Signal
+
+        class EnvUpdateWorker(QThread):
+            finished_signal = Signal(bool, str, int, int)
+
+            def run(self):
+                c_success, c_msg = update_comfyui()
+                s_count, f_count, _ = update_all_custom_nodes()
+                self.finished_signal.emit(c_success, c_msg, s_count, f_count)
+
+        def _on_update_done(c_success, c_msg, s_count, f_count):
             set_active_env(original_env_id)
             btn.setEnabled(True)
             btn.setText("Update")
-            
             msg = f"ComfyUI Update: {'Success' if c_success else 'Failed'}\nNodes Update: {s_count} succeeded, {f_count} failed"
             if not c_success:
                 msg += f"\n\nError: {c_msg}"
-                
             QMessageBox.information(self, "Update Complete", msg)
+
+        self._env_update_worker = EnvUpdateWorker()
+        self._env_update_worker.finished_signal.connect(_on_update_done)
+        self._env_update_worker.start()
 
     def _open_folder(self, path):
         if not path or not os.path.exists(path):
@@ -400,7 +415,7 @@ class AdvancedAddonsDialog(QDialog):
             QMessageBox.warning(self, "Error", "Environment not found.")
             return
             
-        comfy_path = env_data.get("path", "")
+        comfy_path = _resolve_env_path(env_data.get("path", ""))
         if not os.path.exists(comfy_path):
             QMessageBox.warning(self, "Error", "ComfyUI is not installed in this environment yet.")
             return

@@ -108,6 +108,60 @@ class StartupWorker(QThread):
         self.finished.emit(results)
 
 
+class SystemStatusWorker(QThread):
+    """Background worker for checking system status (ComfyUI version + custom nodes)."""
+    result_signal = Signal(dict)
+
+    def run(self):
+        result = {"comfy_info": None, "comfy_error": None, "nodes_info": None, "nodes_error": None}
+        try:
+            result["comfy_info"] = check_comfyui_version()
+        except Exception as e:
+            result["comfy_error"] = str(e)
+        try:
+            result["nodes_info"] = check_custom_nodes_updates()
+        except Exception as e:
+            result["nodes_error"] = str(e)
+        self.result_signal.emit(result)
+
+
+class ComfyUpdateWorker(QThread):
+    """Background worker for updating ComfyUI."""
+    result_signal = Signal(bool, str)
+
+    def run(self):
+        success, msg = update_comfyui()
+        self.result_signal.emit(success, msg)
+
+
+class NodesUpdateWorker(QThread):
+    """Background worker for updating all custom nodes."""
+    result_signal = Signal(int, int, list)
+
+    def run(self):
+        success_count, fail_count, results = update_all_custom_nodes()
+        self.result_signal.emit(success_count, fail_count, results)
+
+
+class NodeDbRefreshWorker(QThread):
+    """Background worker for refreshing node/model databases."""
+    result_signal = Signal(int, int)
+
+    def run(self):
+        fetch_node_db(force_refresh=True)
+        load_model_db()
+        self.result_signal.emit(len(NODE_DB), len(MODEL_DB))
+
+
+class SyncWorkflowsWorker(QThread):
+    """Background worker for syncing workflows."""
+    result_signal = Signal(int, int)
+
+    def run(self):
+        synced, skipped = sync_workflows()
+        self.result_signal.emit(synced, skipped)
+
+
 class DownloadQueueWorker(QThread):
     """Background worker for downloading queue items."""
     item_started = Signal(str, int, int)  # name, index, total
@@ -971,7 +1025,12 @@ class ManagerWindow(QMainWindow):
             base_folders.append(self.paths_list.item(i).text())
             
         paths_dict = {}
-        standard_types = ['checkpoints', 'loras', 'controlnet', 'vae', 'clip', 'clip_vision', 'unet', 'upscale_models', 'embeddings', 'animatediff_models', 'ipadapter']
+        from core.checker import FOLDER_MAPPINGS
+        standard_types = list(FOLDER_MAPPINGS.keys()) if FOLDER_MAPPINGS else [
+            'checkpoints', 'loras', 'controlnet', 'vae', 'clip', 'clip_vision',
+            'unet', 'upscale_models', 'embeddings', 'diffusion_models', 'text_encoders',
+            'sam2', 'LLM', 'audio', 'rife', 'yolo', 'dwpose'
+        ]
         
         for base in base_folders:
             for mtype in standard_types:
@@ -1450,42 +1509,30 @@ class ManagerWindow(QMainWindow):
                 self.update_btn.setEnabled(True)
                 self.update_btn.setText("🔄 Update Available")
     
-    def update_queue_display(self):
-        # Deprecated: No longer using a separate QListWidget for the queue
-        pass
-    
     def refresh_workflows(self):
         # Delegate to the new Tabular UI workflows table
         self._refresh_workflows_tab()
     
     def sync_workflows_ui(self):
         self.status_bar.showMessage("Syncing workflows...")
-        QApplication.processEvents()
-        synced, skipped = sync_workflows()
+        self._sync_wf_worker = SyncWorkflowsWorker()
+        self._sync_wf_worker.result_signal.connect(self._on_sync_workflows_done)
+        self._sync_wf_worker.start()
+
+    def _on_sync_workflows_done(self, synced, skipped):
         self.refresh_workflows()
         self.status_bar.showMessage(f"Synced {synced}, skipped {skipped}")
-    
-    def validate_current_workflow(self):
-        """현재 선택된 워크플로우의 의존성을 검증합니다."""
-        if not hasattr(self, 'workflow_list_table'):
-            return
-        row = self.workflow_list_table.currentRow()
-        if row < 0:
-            QMessageBox.warning(self, "워크플로우 선택", "먼저 워크플로우를 선택하세요.")
-            return
-        
-        item = self.workflow_list_table.item(row, 0)
-        if not item:
-            return
-        filename = item.text()
-        self._validate_workflow(filename)
-    
+
     def update_node_db(self):
         self.status_bar.showMessage("Refreshing databases...")
-        QApplication.processEvents()
-        fetch_node_db(force_refresh=True)
-        load_model_db()
-        self.status_bar.showMessage(f"Nodes: {len(NODE_DB)} | Models: {len(MODEL_DB)}")
+        self.update_db_btn.setEnabled(False)
+        self._node_db_worker = NodeDbRefreshWorker()
+        self._node_db_worker.result_signal.connect(self._on_node_db_done)
+        self._node_db_worker.start()
+
+    def _on_node_db_done(self, node_count, model_count):
+        self.update_db_btn.setEnabled(True)
+        self.status_bar.showMessage(f"Nodes: {node_count} | Models: {model_count}")
     
     def rescan_all_workflows(self):
         self.status_bar.showMessage("Rescanning all workflows...")
@@ -1596,101 +1643,6 @@ class ManagerWindow(QMainWindow):
         self.stat_downloadable.setText(str(downloadable))
         self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
 
-    def on_workflow_selected(self, current, previous):
-        if not current:
-            return
-        filename = current.data(Qt.UserRole)
-        self.check_dependencies(filename)
-    
-    def check_dependencies(self, filename):
-        deps = check_workflow_dependencies(filename)
-        self.models_table.setRowCount(0)
-        
-        total = len(deps["models"])
-        existing = 0
-        missing = 0
-        downloadable = 0
-        
-        for i, model in enumerate(deps["models"]):
-            self.models_table.insertRow(i)
-            name = model["name"]
-            folder = model["subfolder"]
-            is_installed = model["installed"]
-            url_info = model.get("url") or model.get("info")
-            url = ""
-            if isinstance(url_info, dict):
-                url = url_info.get("url", "")
-            elif isinstance(url_info, str):
-                url = url_info
-                
-            # Column 0: Filename
-            item_name = QTableWidgetItem(name)
-            self.models_table.setItem(i, 0, item_name)
-            
-            # Column 1: Type (approximate by folder)
-            item_type = QTableWidgetItem(folder)
-            self.models_table.setItem(i, 1, item_type)
-            
-            # Column 2: Directory
-            item_dir = QTableWidgetItem(f"models/{folder}/")
-            self.models_table.setItem(i, 2, item_dir)
-            
-            # Column 3: Status
-            if is_installed:
-                existing += 1
-                status_text = "EXISTS"
-                status_color = QColor("#10b981")
-            else:
-                missing += 1
-                status_text = "MISSING"
-                status_color = QColor("#ef4444")
-            
-            item_status = QTableWidgetItem(status_text)
-            item_status.setForeground(status_color)
-            font = item_status.font()
-            font.setBold(True)
-            item_status.setFont(font)
-            self.models_table.setItem(i, 3, item_status)
-            
-            # Column 4: Source
-            source_text = url if url else "Unknown"
-            item_source = QTableWidgetItem(source_text)
-            if url:
-                item_source.setForeground(QColor("#3b82f6"))
-            self.models_table.setItem(i, 4, item_source)
-            
-            # Column 5: Action Button
-            action_widget = QWidget()
-            action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(4, 4, 4, 4)
-            btn = QPushButton("Download" if not is_installed else "Re-download")
-            btn.setObjectName("tableActionBtn")
-            btn.setCursor(Qt.PointingHandCursor)
-            
-            if not is_installed and url:
-                downloadable += 1
-                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
-            elif not url:
-                btn.setText("Manual URL")
-                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
-            else:
-                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
-                
-            action_layout.addWidget(btn)
-            self.models_table.setCellWidget(i, 5, action_widget)
-            
-            # Provide tooltips
-            item_name.setToolTip(name)
-            item_source.setToolTip(source_text)
-
-        # Update Banner Stats
-        self.stat_total.setText(str(total))
-        self.stat_existing.setText(str(existing))
-        self.stat_missing.setText(str(missing))
-        self.stat_downloadable.setText(str(downloadable))
-        
-        self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
-
     def install_all_missing(self):
         """1-Click Install All functionality for missing nodes and models with URLs."""
         # Get currently selected workflow
@@ -1700,7 +1652,7 @@ class ManagerWindow(QMainWindow):
         item = self.workflow_list_table.item(row, 0)
         if not item:
             return
-        current_workflow = item.data(Qt.UserRole)
+        current_workflow = item.text()
         if not current_workflow:
             return
 
@@ -1863,31 +1815,47 @@ class ManagerWindow(QMainWindow):
             QMessageBox.warning(self, "Error", msg)
     
     def refresh_system_status(self):
-        """Refresh system status panel with current info."""
-        # Check ComfyUI
-        try:
-            comfy_info = check_comfyui_version()
-            if comfy_info["error"]:
-                self.comfy_status.setText(f"⚠️ {comfy_info['error']}")
-                self.comfy_status.setStyleSheet("color: #ef4444; font-weight: bold;")
-            elif comfy_info["update_available"]:
-                self.comfy_status.setText(f"⚠️ {comfy_info['commits_behind']}개 커밋 뒤처짐")
-                self.comfy_status.setStyleSheet("color: #eab308; font-weight: bold;")
-                self.comfy_update_btn.show()
-            else:
-                self.comfy_status.setText(f"✅ 최신 ({comfy_info['current_commit']})")
-                self.comfy_status.setStyleSheet("color: #10b981; font-weight: bold;")
-                self.comfy_update_btn.hide()
-        except Exception as e:
-            self.comfy_status.setText(f"❌ 오류: {e}")
+        """Refresh system status panel with current info (runs in background thread)."""
+        self.comfy_status.setText("확인 중...")
+        self.comfy_status.setStyleSheet("color: #9ca3af; font-weight: bold;")
+        self.nodes_status.setText("확인 중...")
+        self.nodes_status.setStyleSheet("color: #9ca3af; font-weight: bold;")
+        self.models_status.setText(f"✅ {len(MODEL_DB)}개 등록됨")
+        self.models_status.setStyleSheet("color: #10b981; font-weight: bold;")
+
+        self._system_status_worker = SystemStatusWorker()
+        self._system_status_worker.result_signal.connect(self._on_system_status_done)
+        self._system_status_worker.start()
+
+    def _on_system_status_done(self, result):
+        """Handle system status worker results on the main thread."""
+        # ComfyUI status
+        comfy_info = result.get("comfy_info")
+        comfy_error = result.get("comfy_error")
+        if comfy_error:
+            self.comfy_status.setText(f"❌ 오류: {comfy_error}")
             self.comfy_status.setStyleSheet("color: #ef4444; font-weight: bold;")
-        
-        # Check Custom Nodes
-        try:
-            nodes_info = check_custom_nodes_updates()
+        elif comfy_info and comfy_info.get("error"):
+            self.comfy_status.setText(f"⚠️ {comfy_info['error']}")
+            self.comfy_status.setStyleSheet("color: #ef4444; font-weight: bold;")
+        elif comfy_info and comfy_info.get("update_available"):
+            self.comfy_status.setText(f"⚠️ {comfy_info['commits_behind']}개 커밋 뒤처짐")
+            self.comfy_status.setStyleSheet("color: #eab308; font-weight: bold;")
+            self.comfy_update_btn.show()
+        elif comfy_info:
+            self.comfy_status.setText(f"✅ 최신 ({comfy_info['current_commit']})")
+            self.comfy_status.setStyleSheet("color: #10b981; font-weight: bold;")
+            self.comfy_update_btn.hide()
+
+        # Custom Nodes status
+        nodes_info = result.get("nodes_info")
+        nodes_error = result.get("nodes_error")
+        if nodes_error:
+            self.nodes_status.setText(f"❌ 오류: {nodes_error}")
+            self.nodes_status.setStyleSheet("color: #ef4444; font-weight: bold;")
+        elif nodes_info is not None:
             total = len(nodes_info)
             updatable = len([n for n in nodes_info if n["update_available"]])
-            
             if updatable > 0:
                 self.nodes_status.setText(f"⚠️ {total}개 중 {updatable}개 업데이트 가능")
                 self.nodes_status.setStyleSheet("color: #eab308; font-weight: bold;")
@@ -1896,14 +1864,7 @@ class ManagerWindow(QMainWindow):
                 self.nodes_status.setText(f"✅ {total}개 모두 최신")
                 self.nodes_status.setStyleSheet("color: #10b981; font-weight: bold;")
                 self.nodes_update_btn.hide()
-        except Exception as e:
-            self.nodes_status.setText(f"❌ 오류: {e}")
-            self.nodes_status.setStyleSheet("color: #ef4444; font-weight: bold;")
-        
-        # Models count
-        self.models_status.setText(f"✅ {len(MODEL_DB)}개 등록됨")
-        self.models_status.setStyleSheet("color: #10b981; font-weight: bold;")
-    
+
     def handle_comfy_update(self):
         """Handle ComfyUI update button click."""
         reply = QMessageBox.question(
@@ -1913,13 +1874,16 @@ class ManagerWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        
+
         self.comfy_update_btn.setEnabled(False)
         self.comfy_update_btn.setText("업데이트 중...")
-        QApplication.processEvents()
-        
-        success, msg = update_comfyui()
-        
+
+        self._comfy_update_worker = ComfyUpdateWorker()
+        self._comfy_update_worker.result_signal.connect(self._on_comfy_update_done)
+        self._comfy_update_worker.start()
+
+    def _on_comfy_update_done(self, success, msg):
+        """Handle ComfyUI update worker results on the main thread."""
         if success:
             QMessageBox.information(self, "완료", "ComfyUI가 업데이트되었습니다!")
             self.refresh_system_status()
@@ -1927,7 +1891,7 @@ class ManagerWindow(QMainWindow):
             QMessageBox.warning(self, "실패", f"업데이트 실패: {msg}")
             self.comfy_update_btn.setEnabled(True)
             self.comfy_update_btn.setText("업데이트")
-    
+
     def handle_nodes_update(self):
         """Handle custom nodes update button click."""
         reply = QMessageBox.question(
@@ -1937,18 +1901,21 @@ class ManagerWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        
+
         self.nodes_update_btn.setEnabled(False)
         self.nodes_update_btn.setText("업데이트 중...")
-        QApplication.processEvents()
-        
-        success_count, fail_count, results = update_all_custom_nodes()
-        
+
+        self._nodes_update_worker = NodesUpdateWorker()
+        self._nodes_update_worker.result_signal.connect(self._on_nodes_update_done)
+        self._nodes_update_worker.start()
+
+    def _on_nodes_update_done(self, success_count, fail_count, results):
+        """Handle custom nodes update worker results on the main thread."""
         msg = f"완료!\n\n성공: {success_count}개\n실패: {fail_count}개"
         if fail_count > 0:
             failed_names = [r["name"] for r in results if not r["success"]]
             msg += f"\n\n실패 목록: {', '.join(failed_names[:5])}"
-        
+
         QMessageBox.information(self, "업데이트 완료", msg)
         self.refresh_system_status()
 

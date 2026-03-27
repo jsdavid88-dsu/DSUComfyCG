@@ -7,20 +7,20 @@ echo ========================================================
 echo.
 
 :: ============================================================
-:: GIT RESOLUTION: System Git -> Portable Git (auto-install)
+:: GIT RESOLUTION: Portable Git -> System Git -> Auto-install
 :: ============================================================
 set "GIT_EXE=git"
-
-git --version >nul 2>&1
-if !errorlevel! equ 0 (
-    echo [OK] Git found.
-    goto :git_done
-)
 
 if exist "git_portable\cmd\git.exe" (
     set "GIT_EXE=%~dp0git_portable\cmd\git.exe"
     set "PATH=%~dp0git_portable\cmd;%PATH%"
     echo [OK] Portable Git found.
+    goto :git_done
+)
+
+git --version >nul 2>&1
+if !errorlevel! equ 0 (
+    echo [OK] System Git found.
     goto :git_done
 )
 
@@ -31,11 +31,18 @@ set "GIT_URL=https://github.com/git-for-windows/git/releases/download/v2.47.1.wi
 set "GIT_ZIP=%TEMP%\mingit.zip"
 set "GIT_DIR=%~dp0git_portable"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%GIT_URL%' -OutFile '%GIT_ZIP%'"
+set "DL_OK=0"
+for /L %%i in (1,1,3) do (
+    if "!DL_OK!"=="0" (
+        echo [INFO] Download attempt %%i of 3...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%GIT_URL%' -OutFile '%GIT_ZIP%'"
+        if exist "%GIT_ZIP%" set "DL_OK=1"
+    )
+)
 
-if not exist "%GIT_ZIP%" (
-    echo [ERROR] Failed to download Git. Check internet connection.
+if "!DL_OK!"=="0" (
+    echo [ERROR] Failed to download Git after 3 attempts. Check internet connection.
     echo [INFO] Continuing without auto-update...
     goto :git_done
 )
@@ -74,24 +81,24 @@ if !errorlevel! equ 0 (
 echo.
 
 :: ============================================================
-:: PYTHON RESOLUTION: System Python -> Embedded Python (fallback)
+:: PYTHON RESOLUTION: Embedded Python -> System Python -> Auto-download
 :: ============================================================
 set "PYTHON_EXE="
 set "USING_EMBEDDED=0"
 
-:: 1) Try system Python first
-python --version >nul 2>&1
-if !errorlevel! equ 0 (
-    set "PYTHON_EXE=python"
-    echo [OK] System Python found.
-    goto :python_ready
-)
-
-:: 2) Try existing embedded Python
+:: 1) Try existing embedded Python first
 if exist "python_embeded\python.exe" (
     set "PYTHON_EXE=%~dp0python_embeded\python.exe"
     set "USING_EMBEDDED=1"
     echo [OK] Embedded Python found.
+    goto :python_ready
+)
+
+:: 2) Try system Python
+python --version >nul 2>&1
+if !errorlevel! equ 0 (
+    set "PYTHON_EXE=python"
+    echo [OK] System Python found.
     goto :python_ready
 )
 
@@ -104,11 +111,18 @@ set "PY_URL=https://www.python.org/ftp/python/3.12.8/python-3.12.8-embed-amd64.z
 set "PY_ZIP=%TEMP%\python_embedded.zip"
 set "PY_DIR=%~dp0python_embeded"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%PY_ZIP%'"
+set "DL_OK=0"
+for /L %%i in (1,1,3) do (
+    if "!DL_OK!"=="0" (
+        echo [INFO] Download attempt %%i of 3...
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '%PY_URL%' -OutFile '%PY_ZIP%'"
+        if exist "%PY_ZIP%" set "DL_OK=1"
+    )
+)
 
-if not exist "%PY_ZIP%" (
-    echo [ERROR] Failed to download Python. Check internet connection.
+if "!DL_OK!"=="0" (
+    echo [ERROR] Failed to download Python after 3 attempts. Check internet connection.
     echo.
     pause
     exit /b
@@ -126,8 +140,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 :: Install pip
 echo [INFO] Installing pip...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%PY_DIR%\get-pip.py'"
+set "DL_OK=0"
+for /L %%i in (1,1,3) do (
+    if "!DL_OK!"=="0" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+            "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%PY_DIR%\get-pip.py'"
+        if exist "%PY_DIR%\get-pip.py" set "DL_OK=1"
+    )
+)
+if "!DL_OK!"=="0" (
+    echo [ERROR] Failed to download get-pip.py after 3 attempts.
+    echo.
+    pause
+    exit /b
+)
 "%PY_DIR%\python.exe" "%PY_DIR%\get-pip.py" --no-warn-script-location >nul 2>&1
 
 echo [OK] Embedded Python 3.12 installed successfully!

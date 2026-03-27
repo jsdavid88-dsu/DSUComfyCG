@@ -4,6 +4,11 @@ Title DSUComfyCG Manager
 :: Navigate to parent (DSUComfyCG folder)
 cd ..
 
+:: Setup portable Git PATH
+if exist "%~dp0..\git_portable\cmd\git.exe" (
+    set "PATH=%~dp0..\git_portable\cmd;%PATH%"
+)
+
 :: Check and install dependencies
 .\python_embeded\python.exe -c "import PySide6" 2>nul
 if errorlevel 1 (

@@ -14,6 +14,12 @@ logger = logging.getLogger("ScanInstall")
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Setup portable git
+git_portable = os.path.join(PROJECT_ROOT, "git_portable", "cmd")
+if os.path.isdir(git_portable):
+    os.environ["PATH"] = git_portable + os.pathsep + os.environ.get("PATH", "")
 WORKFLOWS_DIR = os.path.join(SCRIPT_DIR, "workflows")
 CACHE_FILE = os.path.join(SCRIPT_DIR, "processed_workflows.txt")
 COMFY_PATH = os.path.join(SCRIPT_DIR, "ComfyUI")
@@ -85,29 +91,42 @@ def get_missing_nodes(node_types):
     
     return missing
 
+def _find_python_exe():
+    """Find python executable: env-specific first, then root python_embeded."""
+    for candidate in [
+        os.path.join(PROJECT_ROOT, "envs", "stable", "python_embeded", "python.exe"),
+        os.path.join(PROJECT_ROOT, "python_embeded", "python.exe"),
+    ]:
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
 def install_node(url):
     """Clone a node repository and install its requirements."""
     repo_name = url.split("/")[-1].replace(".git", "")
     target_path = os.path.join(CUSTOM_NODES_PATH, repo_name)
-    
+
     if os.path.exists(target_path):
         logger.info(f"{repo_name} already exists")
         return True
-    
+
     try:
         logger.info(f"Installing {repo_name}...")
-        subprocess.check_call(["git", "clone", "--depth", "1", url, target_path])
-        
+        subprocess.check_call(["git", "clone", "--depth", "1", "--", url, target_path])
+
+        python_exe = _find_python_exe()
+        if not python_exe:
+            logger.warning("Python executable not found, skipping dependency install")
+            return True
+
         # Install requirements.txt if exists
         req_file = os.path.join(target_path, "requirements.txt")
         if os.path.exists(req_file) and os.path.getsize(req_file) > 0:
-            python_exe = os.path.join(SCRIPT_DIR, "python_embeded", "python.exe")
             subprocess.check_call([python_exe, "-m", "uv", "pip", "install", "-r", req_file, "--no-cache"])
-        
+
         # Run install.py if exists
         install_py = os.path.join(target_path, "install.py")
         if os.path.exists(install_py) and os.path.getsize(install_py) > 0:
-            python_exe = os.path.join(SCRIPT_DIR, "python_embeded", "python.exe")
             subprocess.check_call([python_exe, install_py])
         
         logger.info(f"Installed {repo_name}")

@@ -57,44 +57,56 @@ def ensure_git_installed(progress_cb=None):
     import shutil
     import subprocess
     import urllib.request
-    
+    import zipfile
+
     setup_portable_git()
     if shutil.which("git"):
         return True, "Git is installed."
-        
-    # Download Portable Git
+
+    # Download MinGit
     if progress_cb:
-        progress_cb("Git not found. Downloading Portable Git...")
-        
-    portable_git_dir = os.path.join(BASE_DIR, "git_portable")
-    os.makedirs(portable_git_dir, exist_ok=True)
-    git_url = "https://github.com/git-for-windows/git/releases/download/v2.44.0.windows.1/PortableGit-2.44.0-64-bit.7z.exe"
-    exe_path = os.path.join(portable_git_dir, "PortableGit.exe")
-    
-    try:
-        urllib.request.urlretrieve(git_url, exe_path)
-    except Exception as e:
-        return False, f"Failed to download Portable Git: {e}"
-        
-    if progress_cb:
-        progress_cb("Extracting Portable Git (This may take a minute)...")
-    
-    try:
-        subprocess.run([exe_path, "-y"], cwd=portable_git_dir, check=True)
+        progress_cb("Git not found. Downloading MinGit portable...")
+
+    git_dir = os.path.join(BASE_DIR, "git_portable")
+    os.makedirs(git_dir, exist_ok=True)
+    zip_path = os.path.join(BASE_DIR, "mingit.zip")
+    git_url = "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip"
+
+    logger.info("Downloading MinGit portable...")
+    # Download with retry
+    for attempt in range(3):
         try:
-            os.remove(exe_path)
-        except:
-            pass
+            urllib.request.urlretrieve(git_url, zip_path)
+            if os.path.exists(zip_path) and os.path.getsize(zip_path) > 1_000_000:
+                break
+        except Exception as e:
+            logger.warning(f"Download attempt {attempt+1} failed: {e}")
+            if attempt == 2:
+                return False, f"Failed to download MinGit after 3 attempts: {e}"
+
+    if progress_cb:
+        progress_cb("Extracting MinGit...")
+
+    # Extract zip
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(git_dir)
     except Exception as e:
-        return False, f"Failed to extract Portable Git: {e}"
-        
+        logger.error(f"Failed to extract MinGit: {e}")
+        return False, f"Failed to extract MinGit: {e}"
+    finally:
+        try:
+            os.remove(zip_path)
+        except Exception:
+            pass
+
     setup_portable_git()
     if shutil.which("git"):
         if progress_cb:
-            progress_cb("✓ Portable Git installed successfully.")
-        return True, "Portable Git installed."
+            progress_cb("✓ MinGit installed successfully.")
+        return True, "MinGit installed."
     else:
-        return False, "Portable Git extraction failed."
+        return False, "MinGit extraction failed."
 
 # --- Multi-Instance Environment Management ---
 ENVS_FILE = os.path.join(MANAGER_DIR, "data", "envs.json")
@@ -262,6 +274,7 @@ def get_python_path():
     import shutil
     sys_py = shutil.which("python")
     if sys_py:
+        logger.warning(f"Using system Python as fallback: {sys_py}")
         return sys_py
     
     # Absolute fallback
@@ -371,8 +384,9 @@ def fetch_ext_model_db():
 def read_extra_model_paths():
     global EXTRA_MODEL_PATHS
     EXTRA_MODEL_PATHS = {}
-    yaml_path = os.path.join(get_comfy_path(), 'extra_model_paths.yaml')
-    if not os.path.isfile(yaml_path):
+    comfy_path = get_comfy_path()
+    yaml_path = os.path.join(comfy_path, 'extra_model_paths.yaml')
+    if not os.path.exists(yaml_path):
         return EXTRA_MODEL_PATHS
     try:
         import yaml
@@ -380,14 +394,26 @@ def read_extra_model_paths():
             data = yaml.safe_load(f)
         if data:
             for conf_name, conf in data.items():
-                if isinstance(conf, dict) and 'base_path' in conf:
-                    base = conf['base_path']
-                    for mtype, paths in conf.items():
-                        if mtype == 'base_path': continue
-                        if isinstance(paths, str): paths = [paths]
-                        for p in paths:
-                            full_path = p if os.path.isabs(p) else os.path.join(base, p)
-                            EXTRA_MODEL_PATHS.setdefault(mtype, []).append(full_path.replace('\\', '/'))
+                if not isinstance(conf, dict):
+                    continue
+                base = conf.get('base_path', '')
+                for mtype, paths in conf.items():
+                    if mtype in ('base_path', 'is_default'):
+                        continue
+                    if isinstance(paths, str):
+                        paths = [paths]
+                    if not isinstance(paths, list):
+                        continue
+                    for p in paths:
+                        if base:
+                            full_path = os.path.join(base, p)
+                        else:
+                            full_path = p
+                        # Resolve relative paths against ComfyUI dir (where yaml lives)
+                        if not os.path.isabs(full_path):
+                            full_path = os.path.normpath(os.path.join(comfy_path, full_path))
+                        full_path = full_path.replace('\\', '/')
+                        EXTRA_MODEL_PATHS.setdefault(mtype, []).append(full_path)
     except Exception as e:
         logger.warning(f'Failed to read extra paths: {e}')
     return EXTRA_MODEL_PATHS
@@ -638,9 +664,9 @@ def fetch_node_db(force_refresh=False):
                     NODE_DB = json.load(f)
                     logger.info(f"Loaded NODE_DB from cache ({len(NODE_DB)} entries)")
                     return True
-        except:
+        except Exception:
             pass
-    
+
     if not requests:
         return False
     
@@ -678,7 +704,7 @@ def fetch_node_db(force_refresh=False):
                 with open(NODE_DB_CACHE_FILE, 'r', encoding='utf-8') as f:
                     NODE_DB = json.load(f)
                 return True
-            except:
+            except Exception:
                 pass
         return False
 
@@ -791,7 +817,7 @@ def search_huggingface(model_name):
                     if file_basename.lower() == basename.lower():
                         logger.info(f"Found EXACT match in priority repo: {repo_id}/{f}")
                         return repo_id, f
-            except:
+            except Exception:
                 continue
         
         # Step 2: General search by model name
@@ -815,7 +841,7 @@ def search_huggingface(model_name):
                     if file_basename.lower() == basename.lower():
                         logger.info(f"Found EXACT match: {model.id}/{f}")
                         return model.id, f
-            except:
+            except Exception:
                 continue
         
         # Step 2b: Partial match (only if no exact match found)
@@ -945,11 +971,14 @@ def download_model(model_name, progress_callback=None):
         return False, f"Model '{model_name}' not found in MODEL_DB"
     
     folder_key = info.get("folder", "checkpoints")
-    folder_path = FOLDER_MAPPINGS.get(folder_key, f"ComfyUI/models/{folder_key}")
+    folder_path = FOLDER_MAPPINGS.get(folder_key)
+    if not folder_path:
+        # Use active env's ComfyUI models path
+        folder_path = os.path.join(get_comfy_path(), "models", folder_key)
     # Also check EXTRA_MODEL_PATHS
     if folder_key in EXTRA_MODEL_PATHS and len(EXTRA_MODEL_PATHS[folder_key]) > 0:
         folder_path = EXTRA_MODEL_PATHS[folder_key][0]
-    target_dir = os.path.join(BASE_DIR, folder_path) if not os.path.isabs(folder_path) else folder_path
+    target_dir = folder_path if os.path.isabs(folder_path) else os.path.join(BASE_DIR, folder_path)
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
@@ -1391,7 +1420,7 @@ def install_node(git_url, enable_rollback=True):
 
     try:
         logger.info(f"Cloning {git_url} into {folder_name}...")
-        subprocess.check_call(["git", "clone", git_url, target_path])
+        subprocess.check_call(["git", "clone", "--", git_url, target_path])
         
         # Dependency analysis
         req_path = os.path.join(target_path, "requirements.txt")
@@ -1404,7 +1433,13 @@ def install_node(git_url, enable_rollback=True):
                 logger.warning(f"Dependency conflicts detected for {folder_name}:\n{msg}")
             
             logger.info(f"Installing dependencies for {folder_name}...")
-            subprocess.check_call([get_python_path(), "-m", "pip", "install", "-r", req_path])
+            python_path = get_python_path()
+            # Prefer uv, fallback to pip
+            try:
+                subprocess.check_call([python_path, "-m", "uv", "pip", "install", "-r", req_path],
+                                     capture_output=True)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                subprocess.check_call([python_path, "-m", "pip", "install", "-r", req_path])
             
             # Post-install check
             try:
@@ -1470,7 +1505,7 @@ def get_system_status():
                 capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5
             )
             status["python_version"] = result.stdout.strip().replace("Python ", "")
-        except:
+        except Exception:
             pass
     
     try:
@@ -1483,7 +1518,7 @@ def get_system_status():
             status["cuda_available"] = lines[0].strip() == "True"
         if len(lines) >= 2 and lines[1].strip():
             status["gpu_name"] = lines[1].strip()
-    except:
+    except Exception:
         pass
     
     return status
@@ -1500,7 +1535,7 @@ def sync_workflows():
         response = requests.get(WORKFLOWS_REPO_URL, timeout=15)
         response.raise_for_status()
         files = response.json()
-    except:
+    except Exception:
         return 0, 0
     
     synced = 0
@@ -1523,7 +1558,7 @@ def sync_workflows():
                 with open(local_path, 'wb') as file:
                     file.write(resp.content)
                 synced += 1
-        except:
+        except Exception:
             pass
     
     return synced, skipped
@@ -1545,9 +1580,23 @@ def run_comfyui():
         return False, f"ComfyUI main.py를 찾을 수 없습니다: {comfy_main}"
     
     try:
+        # Sanitize PATH for child process
+        env = os.environ.copy()
+        portable_paths = []
+        git_cmd = os.path.join(BASE_DIR, "git_portable", "cmd")
+        if os.path.isdir(git_cmd):
+            portable_paths.append(git_cmd)
+        python_dir = os.path.dirname(python_path)
+        portable_paths.append(python_dir)
+        # Keep only essential system paths
+        system_root = os.environ.get("SystemRoot", r"C:\Windows")
+        essential = [os.path.join(system_root, "system32"), system_root]
+        env["PATH"] = os.pathsep.join(portable_paths + essential)
+
         subprocess.Popen(
             [python_path, "-I", comfy_main, "--windows-standalone-build"],
-            cwd=os.path.dirname(get_comfy_path())
+            cwd=get_comfy_path(),
+            env=env
         )
         return True, "ComfyUI가 시작되었습니다!"
     except Exception as e:
@@ -1630,7 +1679,7 @@ def install_comfyui(env_name="stable", options=None, progress_cb=None):
     # ── Step 1: Clone ComfyUI ──
     if not os.path.exists(os.path.join(comfy_path, "main.py")):
         _progress("Step 1/7: Cloning ComfyUI...")
-        rc = _run_stream(["git", "clone", "https://github.com/Comfy-Org/ComfyUI", comfy_path])
+        rc = _run_stream(["git", "clone", "--", "https://github.com/Comfy-Org/ComfyUI", comfy_path])
         if rc != 0:
             return False, "ComfyUI 클론에 실패했습니다. Git이 설치되어 있는지 확인해 주세요."
         _progress("✓ ComfyUI cloned.")
@@ -1710,7 +1759,7 @@ def install_comfyui(env_name="stable", options=None, progress_cb=None):
             _progress(f"Installing node {i+1}/{len(custom_nodes)}: {folder}...")
             target = os.path.join(cn_dir, folder)
             if not os.path.exists(target):
-                _run(["git", "clone", url, target])
+                _run(["git", "clone", "--", url, target])
                 node_req = os.path.join(target, "requirements.txt")
                 if os.path.exists(node_req) and os.path.getsize(node_req) > 0:
                     _run([python_exe, "-I", "-m", "uv", "pip", "install", "-r", node_req] + UV_ARGS.split())
@@ -1729,15 +1778,19 @@ def install_comfyui(env_name="stable", options=None, progress_cb=None):
     if options.get("shared_models", True):
         shared_models = get_shared_models_path()
         os.makedirs(shared_models, exist_ok=True)
-        for subdir in ["checkpoints", "loras", "vae", "clip", "unet", "controlnet",
-                       "clip_vision", "upscale_models", "embeddings"]:
+        # Get ALL model types from folder_mappings (Single Source of Truth)
+        model_types = list(FOLDER_MAPPINGS.keys()) if FOLDER_MAPPINGS else [
+            "checkpoints", "loras", "vae", "clip", "unet", "controlnet",
+            "clip_vision", "upscale_models", "embeddings", "diffusion_models",
+            "text_encoders", "sam2", "LLM", "audio", "rife", "yolo", "dwpose"
+        ]
+        for subdir in model_types:
             os.makedirs(os.path.join(shared_models, subdir), exist_ok=True)
         yaml_path = os.path.join(comfy_path, "extra_model_paths.yaml")
         rel_models = os.path.relpath(shared_models, comfy_path).replace("\\", "/")
         with open(yaml_path, 'w') as f:
             f.write(f'dsu_shared:\n    base_path: "{rel_models}"\n')
-            for subdir in ["checkpoints", "loras", "vae", "clip", "unet", "controlnet",
-                           "clip_vision", "upscale_models", "embeddings"]:
+            for subdir in model_types:
                 f.write(f'    {subdir}: {subdir}\n')
         _progress("✓ Shared models linked.")
     
@@ -1806,7 +1859,7 @@ def get_local_version():
             with open(VERSION_FILE, 'r') as f:
                 return f.read().strip()
         return "0.0.0"
-    except:
+    except Exception:
         return "0.0.0"
 
 
@@ -1842,7 +1895,7 @@ def compare_versions(local, remote):
             elif l > r:
                 return -1
         return 0
-    except:
+    except Exception:
         return 0
 
 
@@ -1862,6 +1915,7 @@ def check_for_updates():
 
 def perform_update():
     """Perform git pull to update the app. Returns (success, message)."""
+    ensure_git_installed()
     try:
         # Check if git is available
         result = subprocess.run(
@@ -1900,7 +1954,7 @@ def perform_update():
 
 def check_comfyui_version():
     """Check ComfyUI current vs latest version.
-    
+
     Returns dict: {
         "installed": bool,
         "current_commit": str,
@@ -1910,6 +1964,7 @@ def check_comfyui_version():
         "error": str or None
     }
     """
+    ensure_git_installed()
     result = {
         "installed": os.path.exists(get_comfy_path()),
         "current_commit": None,
@@ -1968,7 +2023,7 @@ def check_comfyui_version():
         
         try:
             result["commits_behind"] = int(behind.stdout.strip())
-        except:
+        except Exception:
             result["commits_behind"] = 0
         
         result["update_available"] = result["commits_behind"] > 0
@@ -1981,7 +2036,7 @@ def check_comfyui_version():
 
 def check_custom_nodes_updates():
     """Check all custom nodes for available updates.
-    
+
     Returns list of dicts: [{
         "name": str,
         "path": str,
@@ -1991,6 +2046,7 @@ def check_custom_nodes_updates():
         "error": str or None
     }]
     """
+    ensure_git_installed()
     results = []
     
     if not os.path.exists(get_custom_nodes_path()):
@@ -2151,48 +2207,8 @@ def get_system_health_report():
 # extra_model_paths.yaml Support
 # =============================================================================
 
-def load_extra_model_paths():
-    """Load extra model paths from ComfyUI's extra_model_paths.yaml."""
-    global EXTRA_MODEL_PATHS
-    
-    yaml_path = os.path.join(get_comfy_path(), "extra_model_paths.yaml")
-    if not os.path.exists(yaml_path):
-        return
-    
-    if not yaml:
-        logger.debug("PyYAML not installed, cannot load extra_model_paths.yaml")
-        return
-    
-    try:
-        with open(yaml_path, 'r', encoding='utf-8') as f:
-            data = yaml.safe_load(f)
-        
-        if not isinstance(data, dict):
-            return
-        
-        for config_name, paths in data.items():
-            if not isinstance(paths, dict):
-                continue
-            base_path = paths.get("base_path", "")
-            for key, path in paths.items():
-                if key in ("base_path", "is_default"):
-                    continue
-                if isinstance(path, str):
-                    path = [path]
-                if not isinstance(path, list):
-                    continue
-                for p in path:
-                    if base_path and not os.path.isabs(p):
-                        full_path = os.path.join(base_path, p)
-                    else:
-                        full_path = p
-                    full_path = full_path.replace('\\', '/')
-                    EXTRA_MODEL_PATHS.setdefault(key, []).append(full_path)
-                    logger.info(f"[ExtraPath] {key} → {full_path}")
-        
-        logger.info(f"Loaded {len(EXTRA_MODEL_PATHS)} extra model paths")
-    except Exception as e:
-        logger.warning(f"Failed to load extra_model_paths.yaml: {e}")
+
+# load_extra_model_paths() has been unified into read_extra_model_paths()
 
 
 # =============================================================================
@@ -2375,9 +2391,12 @@ def get_unused_models():
 
 
 # Initialize NODE_DB and MODEL_DB on module load
-fetch_node_db()
+try:
+    fetch_node_db()
+except Exception:
+    logger.warning("Failed to fetch node DB on startup, will retry later")
 load_model_db()
 fetch_ext_model_db()
-load_extra_model_paths()
+read_extra_model_paths()
 _load_not_found_cache()
 load_model_usage_cache()

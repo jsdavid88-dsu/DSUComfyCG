@@ -25,4 +25,4 @@ async def execute_workflow(request: WorkflowRequest):
     return {"status": "received", "workflow": request.workflow_name}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8188) # ComfyUI standard is 8188, we might use a different one
+    uvicorn.run(app, host="127.0.0.1", port=8188)  # Bind to localhost only for security

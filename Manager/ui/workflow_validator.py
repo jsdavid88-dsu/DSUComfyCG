@@ -295,10 +295,23 @@ class WorkflowValidatorDialog(QDialog):
                 if success:
                     saved_count += 1
             else:
-                # Save to FALLBACK_NODE_DB (in-memory for now)
-                # TODO: Persist to file
+                # Save to FALLBACK_NODE_DB and persist to cache
                 folder_name = name.replace(" ", "-").replace("(", "").replace(")", "")
                 FALLBACK_NODE_DB[name] = (folder_name, url)
+                # Persist to node_db cache
+                from core.checker import CACHE_DIR
+                import json
+                cache_path = os.path.join(CACHE_DIR, "node_db_cache.json")
+                try:
+                    cache_data = {}
+                    if os.path.exists(cache_path):
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                    cache_data[name] = [folder_name, url]
+                    with open(cache_path, 'w', encoding='utf-8') as f:
+                        json.dump(cache_data, f, ensure_ascii=False)
+                except Exception:
+                    pass  # Best effort persistence
                 saved_count += 1
         
         QMessageBox.information(
