@@ -92,13 +92,32 @@ def get_missing_nodes(node_types):
     return missing
 
 def _find_python_exe():
-    """Find python executable: env-specific first, then root python_embeded."""
-    for candidate in [
-        os.path.join(PROJECT_ROOT, "envs", "stable", "python_embeded", "python.exe"),
-        os.path.join(PROJECT_ROOT, "python_embeded", "python.exe"),
-    ]:
-        if os.path.exists(candidate):
-            return candidate
+    """Find python executable: check all envs, then root python_embeded."""
+    # Try to find active env from envs.json
+    envs_json = os.path.join(PROJECT_ROOT, "Manager", "data", "envs.json")
+    if os.path.exists(envs_json):
+        try:
+            with open(envs_json, 'r', encoding='utf-8') as f:
+                envs_data = json.load(f)
+            for env_id, env_info in envs_data.items():
+                py_path = env_info.get("python_path", "")
+                if py_path:
+                    full = os.path.join(PROJECT_ROOT, py_path) if not os.path.isabs(py_path) else py_path
+                    if os.path.exists(full):
+                        return full
+        except Exception:
+            pass
+    # Fallback: scan envs/ directory
+    envs_dir = os.path.join(PROJECT_ROOT, "envs")
+    if os.path.isdir(envs_dir):
+        for env_name in os.listdir(envs_dir):
+            candidate = os.path.join(envs_dir, env_name, "python_embeded", "python.exe")
+            if os.path.exists(candidate):
+                return candidate
+    # Last fallback: root python_embeded
+    root_py = os.path.join(PROJECT_ROOT, "python_embeded", "python.exe")
+    if os.path.exists(root_py):
+        return root_py
     return None
 
 def install_node(url):

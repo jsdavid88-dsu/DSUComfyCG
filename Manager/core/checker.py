@@ -101,6 +101,10 @@ def ensure_git_installed(progress_cb=None):
             pass
 
     setup_portable_git()
+    # Also check git_portable/bin/git.exe (some MinGit layouts)
+    git_bin = os.path.join(git_dir, "bin")
+    if os.path.isdir(git_bin) and git_bin not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = git_bin + os.pathsep + os.environ.get("PATH", "")
     if shutil.which("git"):
         if progress_cb:
             progress_cb("✓ MinGit installed successfully.")
@@ -385,6 +389,8 @@ def read_extra_model_paths():
     global EXTRA_MODEL_PATHS
     EXTRA_MODEL_PATHS = {}
     comfy_path = get_comfy_path()
+    if not comfy_path or not os.path.isdir(comfy_path):
+        return EXTRA_MODEL_PATHS
     yaml_path = os.path.join(comfy_path, 'extra_model_paths.yaml')
     if not os.path.exists(yaml_path):
         return EXTRA_MODEL_PATHS
@@ -1588,9 +1594,15 @@ def run_comfyui():
             portable_paths.append(git_cmd)
         python_dir = os.path.dirname(python_path)
         portable_paths.append(python_dir)
-        # Keep only essential system paths
+        # Keep essential system paths + NVIDIA/CUDA paths
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
         essential = [os.path.join(system_root, "system32"), system_root]
+        # Preserve NVIDIA/CUDA paths from original PATH for GPU support
+        original_path = os.environ.get("PATH", "")
+        for p in original_path.split(os.pathsep):
+            p_lower = p.lower()
+            if any(k in p_lower for k in ["nvidia", "cuda", "nvsmi", "tensorrt"]):
+                essential.append(p)
         env["PATH"] = os.pathsep.join(portable_paths + essential)
 
         subprocess.Popen(

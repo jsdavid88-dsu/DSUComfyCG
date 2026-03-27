@@ -1823,6 +1823,8 @@ class ManagerWindow(QMainWindow):
         self.models_status.setText(f"✅ {len(MODEL_DB)}개 등록됨")
         self.models_status.setStyleSheet("color: #10b981; font-weight: bold;")
 
+        if hasattr(self, '_system_status_worker') and self._system_status_worker.isRunning():
+            return
         self._system_status_worker = SystemStatusWorker()
         self._system_status_worker.result_signal.connect(self._on_system_status_done)
         self._system_status_worker.start()
