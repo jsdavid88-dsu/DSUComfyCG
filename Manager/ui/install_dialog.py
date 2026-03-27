@@ -23,7 +23,7 @@ class InstallWorker(QThread):
         self.options = options
     
     def run(self):
-        from Manager.core.checker import install_comfyui
+        from core.checker import install_comfyui
         success, msg = install_comfyui(
             env_name=self.env_name,
             options=self.options,
