@@ -1,0 +1,102 @@
+{
+    "v1-5-pruned-emaonly.safetensors": {
+        "url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors",
+        "folder": "checkpoints",
+        "size": "4.27GB"
+    },
+    "sd_xl_base_1.0.safetensors": {
+        "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors",
+        "folder": "checkpoints",
+        "size": "6.94GB"
+    },
+    "sd_xl_refiner_1.0.safetensors": {
+        "url": "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors",
+        "folder": "checkpoints",
+        "size": "6.08GB"
+    },
+    "flux1-dev.safetensors": {
+        "url": "https://huggingface.co/black-forest-labs/FLUX.1-dev/resolve/main/flux1-dev.safetensors",
+        "folder": "unet",
+        "size": "23.8GB"
+    },
+    "flux1-schnell.safetensors": {
+        "url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/flux1-schnell.safetensors",
+        "folder": "unet",
+        "size": "23.8GB"
+    },
+    "ae.safetensors": {
+        "url": "https://huggingface.co/black-forest-labs/FLUX.1-schnell/resolve/main/ae.safetensors",
+        "folder": "vae",
+        "size": "335MB"
+    },
+    "t5xxl_fp16.safetensors": {
+        "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors",
+        "folder": "text_encoders",
+        "size": "9.79GB"
+    },
+    "t5xxl_fp8_e4m3fn.safetensors": {
+        "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp8_e4m3fn.safetensors",
+        "folder": "text_encoders",
+        "size": "4.89GB"
+    },
+    "clip_l.safetensors": {
+        "url": "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/clip_l.safetensors",
+        "folder": "text_encoders",
+        "size": "246MB"
+    },
+    "wan2.1_vae.safetensors": {
+        "url": "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan2.1_vae.safetensors",
+        "folder": "vae",
+        "size": "242MB"
+    },
+    "umt5-xxl-enc-bf16.safetensors": {
+        "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/umt5-xxl-enc-bf16.safetensors",
+        "folder": "clip",
+        "size": "12GB"
+    },
+    "RealESRGAN_x4plus.pth": {
+        "url": "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x4plus.pth",
+        "folder": "upscale_models",
+        "size": "63.9MB"
+    },
+    "4x-UltraSharp.pth": {
+        "url": "https://huggingface.co/Kim2091/4x-UltraSharp/resolve/main/4x-UltraSharp.pth",
+        "folder": "upscale_models",
+        "size": "66.9MB"
+    },
+    "sam2_hiera_large.safetensors": {
+        "url": "https://huggingface.co/Kijai/sam2-safetensors/resolve/main/sam2_hiera_large.safetensors",
+        "folder": "sam2",
+        "size": "897MB"
+    },
+    "ip-adapter_sd15.safetensors": {
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter_sd15.safetensors",
+        "folder": "ipadapter",
+        "size": "44MB"
+    },
+    "ip-adapter-plus_sd15.safetensors": {
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/models/ip-adapter-plus_sd15.safetensors",
+        "folder": "ipadapter",
+        "size": "98MB"
+    },
+    "ip-adapter_sdxl_vit-h.safetensors": {
+        "url": "https://huggingface.co/h94/IP-Adapter/resolve/main/sdxl_models/ip-adapter_sdxl_vit-h.safetensors",
+        "folder": "ipadapter",
+        "size": "2.5GB"
+    },
+    "control_v11p_sd15_openpose.pth": {
+        "url": "https://huggingface.co/lllyasviel/ControlNet-v1-1/resolve/main/control_v11p_sd15_openpose.pth",
+        "folder": "controlnet",
+        "size": "1.45GB"
+    },
+    "diffusion_pytorch_model.fp16.safetensors": {
+        "url": "https://huggingface.co/diffusers/controlnet-canny-sdxl-1.0/resolve/main/diffusion_pytorch_model.fp16.safetensors",
+        "folder": "controlnet",
+        "size": "2.5GB"
+    },
+    "ltxv-13b-0.9.7-dev-fp8.safetensors": {
+        "url": "https://huggingface.co/Lightricks/LTX-Video-0.9.7-dev/resolve/main/ltxv-13b-0.9.7-dev-fp8.safetensors",
+        "folder": "checkpoints",
+        "size": "13.3GB"
+    }
+}

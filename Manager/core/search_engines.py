@@ -6,6 +6,7 @@ Provides CivitAI API search and Tavily AI-powered search for model sources.
 import os
 import json
 import logging
+import time
 
 logger = logging.getLogger("SearchEngines")
 
@@ -13,6 +14,60 @@ try:
     import requests
 except ImportError:
     requests = None
+
+# ─── Metadata Cache ───────────────────────────────────────────────────────────
+
+_METADATA_CACHE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "model_metadata.json")
+_metadata_cache = {}
+_CACHE_MAX_AGE = 30 * 24 * 3600  # 30 days
+
+def load_metadata_cache():
+    """Load persistent metadata cache from disk."""
+    global _metadata_cache
+    try:
+        if os.path.exists(_METADATA_CACHE_PATH):
+            with open(_METADATA_CACHE_PATH, 'r', encoding='utf-8') as f:
+                _metadata_cache = json.load(f)
+            # Prune expired entries
+            now = time.time()
+            expired = [k for k, v in _metadata_cache.items()
+                      if now - v.get("_cached_at", 0) > _CACHE_MAX_AGE]
+            for k in expired:
+                del _metadata_cache[k]
+    except Exception:
+        _metadata_cache = {}
+
+def save_metadata_cache():
+    """Save metadata cache to disk."""
+    try:
+        os.makedirs(os.path.dirname(_METADATA_CACHE_PATH), exist_ok=True)
+        with open(_METADATA_CACHE_PATH, 'w', encoding='utf-8') as f:
+            json.dump(_metadata_cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def cache_model_metadata(model_name, url, folder=None, source=None, confidence=None):
+    """Cache a discovered model URL for future lookups."""
+    _metadata_cache[model_name] = {
+        "url": url,
+        "folder": folder or "",
+        "source": source or "unknown",
+        "confidence": confidence or 100,
+        "_cached_at": time.time()
+    }
+    save_metadata_cache()
+
+def get_cached_metadata(model_name):
+    """Get cached metadata for a model. Returns dict or None."""
+    entry = _metadata_cache.get(model_name)
+    if entry and time.time() - entry.get("_cached_at", 0) < _CACHE_MAX_AGE:
+        return entry
+    return None
+
+def get_all_cached_metadata():
+    """Return the full metadata cache dict."""
+    return dict(_metadata_cache)
+
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
@@ -333,7 +388,14 @@ def advanced_search_tavily(model_name, api_key=None):
             include_domains=["huggingface.co", "civitai.com", "github.com"],
             max_results=10,
         )
-        return response.get("results", [])
+        results = response.get("results", [])
+        # Cache the search results
+        if results:
+            best = results[0]
+            url = best.get("url", "")
+            if url:
+                cache_model_metadata(model_name, url, source="tavily", confidence=70)
+        return results
     except ImportError:
         pass
     except Exception as e:
@@ -356,8 +418,19 @@ def advanced_search_tavily(model_name, api_key=None):
             timeout=30
         )
         response.raise_for_status()
-        return response.json().get("results", [])
+        results = response.json().get("results", [])
+        # Cache the search results
+        if results:
+            best = results[0]
+            url = best.get("url", "")
+            if url:
+                cache_model_metadata(model_name, url, source="tavily", confidence=70)
+        return results
     except Exception as e:
         logger.warning(f"[Tavily] REST search failed: {e}")
-    
+
     return []
+
+
+# ─── Module Init ──────────────────────────────────────────────────────────────
+load_metadata_cache()

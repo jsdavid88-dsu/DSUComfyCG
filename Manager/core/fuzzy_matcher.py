@@ -36,6 +36,20 @@ FORMAT_ALIASES = {
     "Q8_0": ["Q6_K", "Q5_K_M", "Q4_K_M"],
 }
 
+# Equivalent model directories — models in these directories are interchangeable
+EQUIVALENT_DIRECTORIES = {
+    "text_encoders": ["clip", "text_encoders"],
+    "clip": ["clip", "text_encoders"],
+    "unet": ["unet", "diffusion_models"],
+    "diffusion_models": ["unet", "diffusion_models"],
+    "controlnet": ["controlnet", "control_net"],
+    "control_net": ["controlnet", "control_net"],
+}
+
+def get_equivalent_dirs(directory):
+    """Return list of equivalent directory names for cross-directory model search."""
+    return EQUIVALENT_DIRECTORIES.get(directory, [directory])
+
 # File extension alternatives
 EXTENSION_ALIASES = {
     ".safetensors": [".ckpt", ".pt", ".pth", ".bin"],

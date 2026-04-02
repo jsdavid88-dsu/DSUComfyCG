@@ -32,9 +32,10 @@ from core.checker import (
     get_all_installed_models, get_unused_models,
     scan_all_workflows_for_models, clear_not_found_cache,
     get_models_path, read_extra_model_paths, write_extra_model_paths,
-    ENVIRONMENTS, get_active_env, set_active_env
+    ENVIRONMENTS, get_active_env, set_active_env,
+    auto_resolve_all
 )
-from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily
+from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily, get_cached_metadata, cache_model_metadata
 from core.aria2_downloader import is_aria2_available
 from ui.url_input_dialog import ModelUrlInputDialog
 from ui.workflow_validator import WorkflowValidatorDialog
@@ -160,6 +161,22 @@ class SyncWorkflowsWorker(QThread):
     def run(self):
         synced, skipped = sync_workflows()
         self.result_signal.emit(synced, skipped)
+
+
+class AutoResolveWorker(QThread):
+    """Background worker for auto-resolving missing model URLs."""
+    progress_signal = Signal(str)  # status message
+    result_signal = Signal(list)  # list of resolved models
+
+    def __init__(self, workflow_files=None):
+        super().__init__()
+        self.workflow_files = workflow_files
+
+    def run(self):
+        def _progress(msg):
+            self.progress_signal.emit(msg)
+        resolved = auto_resolve_all(self.workflow_files, progress_cb=_progress)
+        self.result_signal.emit(resolved)
 
 
 class DownloadQueueWorker(QThread):
@@ -366,6 +383,24 @@ class ManagerWindow(QMainWindow):
         self.install_all_btn.clicked.connect(self.install_all_missing)
         self.install_all_btn.hide() # Shown only when dependencies are missing
         layout.addWidget(self.install_all_btn)
+
+        # Auto-Resolve Button
+        self.auto_resolve_btn = QPushButton("Auto-Resolve Missing")
+        self.auto_resolve_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #2563eb; }
+            QPushButton:disabled { background-color: #94a3b8; }
+        """)
+        self.auto_resolve_btn.clicked.connect(self.handle_auto_resolve)
+        layout.addWidget(self.auto_resolve_btn)
         
         # Update button (hidden by default)
         self.update_btn = QPushButton("🔄 Update Available")
@@ -642,7 +677,13 @@ class ManagerWindow(QMainWindow):
         self.queue_detail_label = QLabel("")
         self.queue_detail_label.setStyleSheet("color: #64748b; font-size: 11px;")
         progress_layout.addWidget(self.queue_detail_label)
-        
+
+        self.queue_cancel_btn = QPushButton("✕")
+        self.queue_cancel_btn.setFixedSize(24, 24)
+        self.queue_cancel_btn.setStyleSheet("QPushButton { background-color: #ef4444; color: white; border-radius: 12px; font-weight: bold; } QPushButton:hover { background-color: #dc2626; }")
+        self.queue_cancel_btn.clicked.connect(self._cancel_download)
+        progress_layout.addWidget(self.queue_cancel_btn)
+
         bottom_layout.addWidget(self.queue_progress_frame)
         self.queue_progress_frame.hide()  # Hidden until download starts
         
@@ -1616,29 +1657,53 @@ class ManagerWindow(QMainWindow):
             item_status.setFont(font)
             self.models_table.setItem(i, 3, item_status)
             
-            # Column 4: Source
+            # Column 4: Source (with confidence if available)
             source_text = url if url else "Unknown"
-            item_source = QTableWidgetItem(source_text)
+            cached = get_cached_metadata(name)
+            confidence_text = ""
+            if cached and cached.get("confidence"):
+                conf = cached["confidence"]
+                confidence_text = f" [{conf}%]"
+            elif url:
+                confidence_text = " [100%]"
+
+            item_source = QTableWidgetItem(source_text + confidence_text)
             if url:
                 item_source.setForeground(QColor("#3b82f6"))
             self.models_table.setItem(i, 4, item_source)
             
-            # Column 5: Action Button
+            # Column 5: Action Buttons
             action_widget = QWidget()
             action_layout = QHBoxLayout(action_widget)
-            action_layout.setContentsMargins(4, 4, 4, 4)
-            btn = QPushButton("Download" if not is_installed else "Re-download")
-            btn.setObjectName("tableActionBtn")
-            btn.setCursor(Qt.PointingHandCursor)
-            
+            action_layout.setContentsMargins(2, 2, 2, 2)
+            action_layout.setSpacing(4)
+
+            btn_style = """
+                QPushButton { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+            """
+
             if url:
                 if not is_installed: downloadable += 1
-                btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
+                dl_btn = QPushButton("Download" if not is_installed else "Re-download")
+                dl_btn.setStyleSheet(btn_style + "QPushButton { background-color: #10b981; color: white; } QPushButton:hover { background-color: #059669; }")
+                dl_btn.setCursor(Qt.PointingHandCursor)
+                dl_btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
+                action_layout.addWidget(dl_btn)
             else:
-                btn.setText("Manual URL")
-                btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
-                
-            action_layout.addWidget(btn)
+                # Manual URL button
+                url_btn = QPushButton("URL")
+                url_btn.setStyleSheet(btn_style + "QPushButton { background-color: #f59e0b; color: white; } QPushButton:hover { background-color: #d97706; }")
+                url_btn.setCursor(Qt.PointingHandCursor)
+                url_btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
+                action_layout.addWidget(url_btn)
+
+                # Search button (fuzzy + API search)
+                search_btn = QPushButton("Search")
+                search_btn.setStyleSheet(btn_style + "QPushButton { background-color: #6366f1; color: white; } QPushButton:hover { background-color: #4f46e5; }")
+                search_btn.setCursor(Qt.PointingHandCursor)
+                search_btn.clicked.connect(lambda c, n=name, sb=search_btn: self._search_model_url(n, sb))
+                action_layout.addWidget(search_btn)
+
             self.models_table.setCellWidget(i, 5, action_widget)
             
             item_name.setToolTip(name)
@@ -1687,7 +1752,93 @@ class ManagerWindow(QMainWindow):
             self.start_queue_download() # Automatically start the queue
         else:
             QMessageBox.information(self, "1-Click Install", "No downloadable items found. Some models may need a manual source URL.")
-    
+
+    def handle_auto_resolve(self):
+        """Auto-resolve URLs for all missing models across all workflows."""
+        self.auto_resolve_btn.setEnabled(False)
+        self.auto_resolve_btn.setText("Resolving...")
+        self.status_bar.showMessage("Auto-resolving missing model URLs...")
+
+        self._auto_resolve_worker = AutoResolveWorker()
+        self._auto_resolve_worker.progress_signal.connect(
+            lambda msg: self.status_bar.showMessage(msg))
+        self._auto_resolve_worker.result_signal.connect(self._on_auto_resolve_done)
+        self._auto_resolve_worker.start()
+
+    def _on_auto_resolve_done(self, resolved):
+        """Handle auto-resolve results."""
+        self.auto_resolve_btn.setEnabled(True)
+        self.auto_resolve_btn.setText("Auto-Resolve Missing")
+
+        if not resolved:
+            self.status_bar.showMessage("Auto-resolve: No downloadable URLs found.")
+            QMessageBox.information(self, "Auto-Resolve", "No new download URLs were found.\n\nAll models are either installed or have unknown sources.")
+            return
+
+        # Queue all resolved models for download
+        for item in resolved:
+            self.add_model_to_queue(item["name"], item["url"])
+
+        self.status_bar.showMessage(f"Auto-resolve: {len(resolved)} models queued for download!")
+
+        # Refresh the table to show updated sources
+        self.populate_all_models_table()
+
+        QMessageBox.information(
+            self, "Auto-Resolve Complete",
+            f"Found URLs for {len(resolved)} missing models.\n\n"
+            f"All have been added to the download queue."
+        )
+
+    def _search_model_url(self, model_name, btn):
+        """Search for a model URL using all available sources."""
+        from core.checker import check_model_in_db
+
+        btn.setEnabled(False)
+        btn.setText("...")
+        QApplication.processEvents()
+
+        # Run search in a simple thread
+        from PySide6.QtCore import QThread, Signal
+
+        class SearchWorker(QThread):
+            result_signal = Signal(str, str, object)  # model_name, url, info
+
+            def __init__(self, name):
+                super().__init__()
+                self.name = name
+
+            def run(self):
+                found, info = check_model_in_db(self.name)
+                url = ""
+                if found and info:
+                    url = info.get("url", "") if isinstance(info, dict) else str(info)
+                self.result_signal.emit(self.name, url, info)
+
+        def _on_search_done(name, url, info):
+            btn.setEnabled(True)
+            if url:
+                btn.setText("Found")
+                btn.setStyleSheet("QPushButton { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background-color: #10b981; color: white; }")
+                self.add_model_to_queue(name, url)
+                self.status_bar.showMessage(f"Found URL for {name[:40]}... Added to queue.")
+                # Cache the result
+                cache_model_metadata(name, url, source="search")
+            else:
+                btn.setText("Not Found")
+                self.status_bar.showMessage(f"Could not find URL for {name}")
+
+        self._model_search_worker = SearchWorker(model_name)
+        self._model_search_worker.result_signal.connect(_on_search_done)
+        self._model_search_worker.start()
+
+    def _cancel_download(self):
+        """Cancel the current download queue."""
+        if hasattr(self, 'download_worker') and self.download_worker.isRunning():
+            self.download_worker.cancel()
+            self.status_bar.showMessage("Cancelling downloads...")
+            self.queue_current_label.setText("Cancelling...")
+
     def add_node_to_queue(self, url, name):
         if (url, name) not in self.queue_nodes:
             self.queue_nodes.append((url, name))

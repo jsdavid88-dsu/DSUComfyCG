@@ -1,5 +1,5 @@
 """
-DSUComfyCG Manager - Core Checker Module (v6 - Enhanced Search + aria2 + Model Browser)
+DSUComfyCG Manager - Core Checker Module (v7 - Subgraph scanning, CivitAI URN, Popular Models, Resume, auto_resolve_all)
 """
 
 import os
@@ -25,7 +25,7 @@ except ImportError:
     yaml = None
 
 # New enhanced modules
-from core.fuzzy_matcher import enhanced_model_search, CONFIDENCE_EXACT
+from core.fuzzy_matcher import enhanced_model_search, CONFIDENCE_EXACT, get_equivalent_dirs
 from core.search_engines import search_civitai, search_tavily, get_api_key, load_settings
 from core.aria2_downloader import smart_download, is_aria2_available
 from importlib.metadata import version, PackageNotFoundError
@@ -332,6 +332,9 @@ EXTRA_MODEL_PATHS = {}  # From extra_model_paths.yaml
 # Embedded model URLs found in workflows (name -> {url, directory, source})
 EMBEDDED_MODEL_URLS = {}
 
+# Popular models registry (from popular_models.json)
+POPULAR_MODELS = {}
+
 # NOT_FOUND cache - models that couldn't be found (avoid re-searching)
 NOT_FOUND_CACHE = set()
 NOT_FOUND_CACHE_FILE = os.path.join(CACHE_DIR, "not_found_cache.json")
@@ -473,6 +476,20 @@ def check_model_in_db(model_name):
             "_method": "embedded"
         }
     
+    # 0.5. Check popular models registry (instant, no API)
+    if model_name in POPULAR_MODELS:
+        info = dict(POPULAR_MODELS[model_name]) if isinstance(POPULAR_MODELS[model_name], dict) else {"url": str(POPULAR_MODELS[model_name])}
+        info.setdefault("_confidence", CONFIDENCE_EXACT)
+        info.setdefault("_method", "popular_models")
+        logger.info(f"[Model Check] ✓ Found in POPULAR_MODELS: {model_name}")
+        return True, info
+    if basename != model_name and basename in POPULAR_MODELS:
+        info = dict(POPULAR_MODELS[basename]) if isinstance(POPULAR_MODELS[basename], dict) else {"url": str(POPULAR_MODELS[basename])}
+        info.setdefault("_confidence", CONFIDENCE_EXACT)
+        info.setdefault("_method", "popular_models")
+        logger.info(f"[Model Check] ✓ Found in POPULAR_MODELS (basename): {basename}")
+        return True, info
+
     # 1. Local MODEL_DB Check (exact)
     if model_name in MODEL_DB:
         logger.info(f"[Model Check] ✓ Direct match in MODEL_DB")
@@ -734,6 +751,19 @@ def load_model_db():
     except Exception as e:
         logger.error(f"Failed to load MODEL_DB: {e}")
         return False
+
+
+def load_popular_models():
+    """Load popular models registry from popular_models.json."""
+    global POPULAR_MODELS
+    pop_path = os.path.join(MANAGER_DIR, "data", "popular_models.json")
+    if os.path.exists(pop_path):
+        try:
+            with open(pop_path, 'r', encoding='utf-8') as f:
+                POPULAR_MODELS = json.load(f)
+            logger.info(f"Loaded {len(POPULAR_MODELS)} popular models")
+        except Exception as e:
+            logger.warning(f"Failed to load popular models: {e}")
 
 
 def save_url_to_model_db(model_name, url, folder):
@@ -1042,28 +1072,51 @@ def download_model(model_name, progress_callback=None):
     
     if not requests:
         return False, "requests module not available"
-    
+
     try:
         logger.info(f"Downloading {filename}...")
         session = requests.Session()
-        response = session.get(url, stream=True, timeout=60, allow_redirects=True)
+
+        # Check for partial download (resume support)
+        partial_path = target_path + ".partial"
+        resume_pos = 0
+        if os.path.exists(partial_path):
+            resume_pos = os.path.getsize(partial_path)
+            logger.info(f"Resuming download from {resume_pos} bytes")
+
+        dl_headers = {}
+        if resume_pos > 0:
+            dl_headers["Range"] = f"bytes={resume_pos}-"
+
+        response = session.get(url, stream=True, timeout=60, allow_redirects=True, headers=dl_headers)
         response.raise_for_status()
-        
-        total_size = int(response.headers.get('content-length', 0))
-        
-        # Parallel download if > 50MB
-        if total_size > 50 * 1024 * 1024:
+
+        # If server returned 200 (not 206), it doesn't support range - restart
+        if resume_pos > 0 and response.status_code != 206:
+            logger.info("Server does not support resume, restarting download")
+            resume_pos = 0
+
+        total_size = int(response.headers.get('content-length', 0)) + resume_pos
+
+        # Parallel download if > 50MB (only for fresh downloads)
+        if resume_pos == 0 and total_size > 50 * 1024 * 1024:
             logger.info(f"Large file ({total_size // (1024*1024)}MB), attempting parallel download...")
             success, msg = download_model_parallel(url, target_path, total_size, progress_callback)
             if success:
                 return True, f"Downloaded {filename} (Parallel)"
             else:
                 logger.warning(f"Parallel download failed: {msg}. Falling back to sequential.")
+                # Re-request for sequential fallback
+                response = session.get(url, stream=True, timeout=60, allow_redirects=True)
+                response.raise_for_status()
+                resume_pos = 0
+                total_size = int(response.headers.get('content-length', 0))
 
-        # Sequential fallback
-        downloaded = 0
-        last_reported = 0
-        with open(target_path, 'wb') as f:
+        # Sequential download to .partial file, rename on completion
+        downloaded = resume_pos
+        last_reported = resume_pos
+        write_mode = 'ab' if resume_pos > 0 else 'wb'
+        with open(partial_path, write_mode) as f:
             for chunk in response.iter_content(chunk_size=1024 * 1024):
                 if chunk:
                     f.write(chunk)
@@ -1072,10 +1125,16 @@ def download_model(model_name, progress_callback=None):
                         if downloaded - last_reported >= 1024 * 1024:
                             progress_callback(downloaded, total_size)
                             last_reported = downloaded
-        
+
+        # Rename .partial to final path on successful completion
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        os.rename(partial_path, target_path)
+
         return True, f"Downloaded {filename}"
-    
+
     except Exception as e:
+        # Keep .partial file for resume on next attempt; clean up target if exists
         if os.path.exists(target_path):
             os.remove(target_path)
         return False, f"Error: {str(e)}"
@@ -1091,6 +1150,23 @@ def scan_workflows():
     return sorted(workflows)
 
 
+def parse_civitai_urn(urn_string):
+    """Parse CivitAI URN format: urn:air:sd1:checkpoint:civitai:MODEL_ID@VERSION_ID
+    Returns (model_id, version_id) or (None, None)."""
+    match = re.match(r'urn:air:[^:]+:[^:]+:civitai:(\d+)@(\d+)', urn_string)
+    if match:
+        return match.group(1), match.group(2)
+    return None, None
+
+
+def resolve_civitai_urn(urn_string):
+    """Resolve CivitAI URN to download URL."""
+    model_id, version_id = parse_civitai_urn(urn_string)
+    if not version_id:
+        return None
+    return f"https://civitai.com/api/download/models/{version_id}"
+
+
 def parse_workflow(filename):
     """Parse a workflow JSON and extract node types, model names, and embedded URLs."""
     filepath = os.path.join(WORKFLOWS_DIR, filename)
@@ -1103,7 +1179,7 @@ def parse_workflow(filename):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         nodes = []
         if isinstance(data, dict):
             if "nodes" in data:
@@ -1112,13 +1188,26 @@ def parse_workflow(filename):
                 nodes = list(data.values())
         elif isinstance(data, list):
             nodes = data
-        
+
+        # Scan subgraph definitions for nested nodes
+        definitions = data.get("definitions") if isinstance(data, dict) else None
+        if isinstance(definitions, dict):
+            subgraphs = definitions.get("subgraphs")
+            if isinstance(subgraphs, dict):
+                for sg_name, sg_data in subgraphs.items():
+                    if isinstance(sg_data, dict):
+                        for node in sg_data.get("nodes", []):
+                            if isinstance(node, dict):
+                                nodes.append(node)
+
+        seen_models = set()
+
         for node in nodes:
             if isinstance(node, dict):
                 node_type = node.get("type") or node.get("class_type")
                 if node_type:
                     node_types.add(node_type)
-                
+
                 # Extract widgets_values for model names
                 widgets = node.get("widgets_values") or []
                 for val in widgets:
@@ -1126,7 +1215,21 @@ def parse_workflow(filename):
                         lower = val.lower()
                         if lower.endswith(('.safetensors', '.ckpt', '.pt', '.pth', '.bin', '.gguf')):
                             model_names.add(val)
-                
+                            seen_models.add(val)
+                        # Check for CivitAI URN references
+                        elif val.startswith("urn:air:"):
+                            url = resolve_civitai_urn(val)
+                            if url:
+                                # Use URN as placeholder name; downstream can refine
+                                urn_filename = url.split('/')[-1]
+                                if urn_filename:
+                                    EMBEDDED_MODEL_URLS[urn_filename] = {
+                                        "url": url,
+                                        "directory": "checkpoints",
+                                        "source": "civitai_urn"
+                                    }
+                                    logger.info(f"[Parse] Resolved CivitAI URN: {val} → {url}")
+
                 # Extract embedded model URLs from properties.models
                 props = node.get("properties", {})
                 if "models" in props and isinstance(props["models"], list):
@@ -1141,11 +1244,30 @@ def parse_workflow(filename):
                                     "directory": directory,
                                     "source": "workflow"
                                 }
+                                seen_models.add(name)
                                 logger.info(f"[Parse] Found embedded URL for: {name} → {directory}")
-                                
+
+        # Extract URLs embedded in workflow text (markdown notes, descriptions, etc.)
+        raw_text = json.dumps(data)
+        url_patterns = [
+            r'https?://huggingface\.co/[^\s"\]]+\.(?:safetensors|ckpt|pt|pth|bin|gguf)',
+            r'https?://civitai\.com/api/download/models/\d+',
+        ]
+        for pattern in url_patterns:
+            for url in re.findall(pattern, raw_text):
+                # Try to extract filename from URL
+                filename = url.split('/')[-1].split('?')[0]
+                if filename and filename not in seen_models:
+                    EMBEDDED_MODEL_URLS[filename] = {
+                        "url": url,
+                        "directory": "checkpoints",
+                        "source": "url_extraction"
+                    }
+                    logger.info(f"[Parse] Extracted URL for: {filename} → {url[:60]}...")
+
     except Exception as e:
         logger.error(f"Failed to parse {filename}: {e}")
-    
+
     return list(node_types), list(model_names)
 
 
@@ -1219,8 +1341,19 @@ def check_model_installed(model_name):
     # Get basename (without subfolder like Kijai_WAN/)
     basename = os.path.basename(model_name.replace("\\", "/"))
     
-    # Search all model directories (including extra paths)
+    # Search all model directories (including extra paths + equivalent dirs)
     search_paths = [get_models_path()]
+    # Also search equivalent directories (e.g., text_encoders <-> clip)
+    models_root = get_models_path()
+    if models_root and os.path.isdir(models_root):
+        # Guess the folder from the model path and add equivalent dirs
+        parts = model_name.replace("\\", "/").split("/")
+        if len(parts) > 1:
+            equiv_dirs = get_equivalent_dirs(parts[0])
+            for ed in equiv_dirs:
+                eq_path = os.path.join(models_root, ed)
+                if os.path.isdir(eq_path) and eq_path not in search_paths:
+                    search_paths.append(eq_path)
     for extra_paths in EXTRA_MODEL_PATHS.values():
         if isinstance(extra_paths, list):
             for ep in extra_paths:
@@ -2402,12 +2535,53 @@ def get_unused_models():
     return unused
 
 
+def auto_resolve_all(workflow_files=None, progress_cb=None):
+    """Resolve URLs for all missing models across all (or specified) workflows.
+    Returns list of {name, url, folder, confidence} for models with found URLs."""
+    resolved = []
+    all_models = set()
+
+    if not workflow_files:
+        workflow_files = scan_workflows()
+
+    # Collect all model names
+    for wf in workflow_files:
+        _, models = parse_workflow(wf)
+        all_models.update(models)
+
+    total = len(all_models)
+    for i, model_name in enumerate(all_models):
+        if progress_cb:
+            progress_cb(f"Resolving {i+1}/{total}: {model_name[:40]}...")
+
+        # Skip if already installed
+        installed, _, _ = check_model_installed(model_name)
+        if installed:
+            continue
+
+        # Try to find URL
+        found, info = check_model_in_db(model_name)
+        if found and info:
+            url = info.get("url", "") if isinstance(info, dict) else str(info)
+            if url:
+                folder = info.get("folder", guess_model_folder(model_name)) if isinstance(info, dict) else guess_model_folder(model_name)
+                resolved.append({
+                    "name": model_name,
+                    "url": url,
+                    "folder": folder,
+                    "confidence": info.get("_confidence", 0) if isinstance(info, dict) else 100
+                })
+
+    return resolved
+
+
 # Initialize NODE_DB and MODEL_DB on module load
 try:
     fetch_node_db()
 except Exception:
     logger.warning("Failed to fetch node DB on startup, will retry later")
 load_model_db()
+load_popular_models()
 fetch_ext_model_db()
 read_extra_model_paths()
 _load_not_found_cache()
