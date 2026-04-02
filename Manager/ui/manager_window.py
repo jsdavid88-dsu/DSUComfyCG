@@ -28,7 +28,7 @@ from core.checker import (
     check_for_updates, perform_update, get_local_version,
     check_comfyui_version, check_custom_nodes_updates, 
     update_comfyui, update_all_custom_nodes, get_system_health_report,
-    save_url_to_model_db, guess_model_folder,
+    save_url_to_model_db, guess_model_folder, check_model_installed,
     get_all_installed_models, get_unused_models,
     scan_all_workflows_for_models, clear_not_found_cache,
     get_models_path, read_extra_model_paths, write_extra_model_paths,
@@ -194,10 +194,18 @@ class DownloadQueueWorker(QThread):
                 break
             index += 1
             self.item_started.emit(f"Model: {name[:30]}...", index, total)
-            
+
             def progress_cb(downloaded, total_bytes):
                 self.item_progress.emit(name, downloaded, total_bytes)
-            
+
+            # If URL provided and not in DB, save to DB first so download_model can find it
+            if url:
+                from core.checker import check_model_in_db, save_url_to_model_db, guess_model_folder
+                in_db, _ = check_model_in_db(name)
+                if not in_db:
+                    folder = guess_model_folder(name)
+                    save_url_to_model_db(name, url, folder)
+
             success, msg = download_model(name, progress_cb)
             self.item_finished.emit(f"Model: {name[:30]}...", success, msg, "")
         
@@ -1576,9 +1584,8 @@ class ManagerWindow(QMainWindow):
             url = data["url"]
             self.models_table.insertRow(i)
             
-            # Simple check if exists
-            model_path = os.path.join(get_models_path(), folder, name)
-            is_installed = os.path.exists(model_path)
+            # Check all model paths (including shared models via EXTRA_MODEL_PATHS)
+            is_installed, _, _ = check_model_installed(name)
             
             # Column 0: Filename
             item_name = QTableWidgetItem(name)
