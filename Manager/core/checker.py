@@ -1007,14 +1007,17 @@ def download_model(model_name, progress_callback=None):
         return False, f"Model '{model_name}' not found in MODEL_DB"
     
     folder_key = info.get("folder", "checkpoints")
-    folder_path = FOLDER_MAPPINGS.get(folder_key)
-    if not folder_path:
-        # Use active env's ComfyUI models path
-        folder_path = os.path.join(get_comfy_path(), "models", folder_key)
-    # Also check EXTRA_MODEL_PATHS
-    if folder_key in EXTRA_MODEL_PATHS and len(EXTRA_MODEL_PATHS[folder_key]) > 0:
-        folder_path = EXTRA_MODEL_PATHS[folder_key][0]
-    target_dir = folder_path if os.path.isabs(folder_path) else os.path.join(BASE_DIR, folder_path)
+    # Download destination priority:
+    # 1. Shared models folder (DSUComfyCG/models/) — preferred, all envs share this
+    # 2. EXTRA_MODEL_PATHS first entry (if configured via extra_model_paths.yaml)
+    # 3. Active env's ComfyUI/models/ — fallback
+    shared_path = os.path.join(get_shared_models_path(), folder_key)
+    if os.path.isdir(get_shared_models_path()):
+        target_dir = shared_path
+    elif folder_key in EXTRA_MODEL_PATHS and len(EXTRA_MODEL_PATHS[folder_key]) > 0:
+        target_dir = EXTRA_MODEL_PATHS[folder_key][0]
+    else:
+        target_dir = os.path.join(get_comfy_path(), "models", folder_key)
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
