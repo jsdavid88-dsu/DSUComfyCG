@@ -1684,6 +1684,10 @@ class ManagerWindow(QMainWindow):
         n_nodes = len(results["missing_nodes"])
         n_models = len(results["missing_models"])
         
+        # Store missing items for 1-Click Install All
+        self._startup_missing_nodes = results["missing_nodes"]  # list of (url, folder)
+        self._startup_missing_models = results["missing_models"]  # list of (name, url)
+
         if n_nodes > 0 or n_models > 0:
             self.install_all_btn.show()
             self.install_all_btn.setText(f"⚡ 1-Click Install All ({n_nodes} nodes, {n_models} models)")
@@ -1921,42 +1925,33 @@ class ManagerWindow(QMainWindow):
         self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
 
     def install_all_missing(self):
-        """1-Click Install All functionality for missing nodes and models with URLs."""
-        # Get currently selected workflow
-        row = self.workflow_list_table.currentRow()
-        if row < 0:
-            return
-        item = self.workflow_list_table.item(row, 0)
-        if not item:
-            return
-        current_workflow = item.text()
-        if not current_workflow:
+        """1-Click Install All — queue ALL missing nodes and models from startup scan."""
+        missing_nodes = getattr(self, '_startup_missing_nodes', [])
+        missing_models = getattr(self, '_startup_missing_models', [])
+
+        if not missing_nodes and not missing_models:
+            QMessageBox.information(self, "1-Click Install", "No missing items found. All dependencies are satisfied!")
             return
 
-        deps = check_workflow_dependencies(current_workflow)
         items_added = 0
-        
-        # Add missing nodes with URLs
-        for node in deps["nodes"]:
-            if not node["installed"] and node["folder"] != "Builtin" and node["url"]:
-                # Check if already in queue to avoid duplicates
-                if not any(n[0] == node["url"] for n in self.queue_nodes):
-                    self.add_node_to_queue(node["url"], node["folder"])
-                    items_added += 1
-                    
-        # Add missing models with URLs
-        for model in deps["models"]:
-            if not model["installed"] and model["url"]:
-                # Check if already in queue
-                if not any(m[0] == model["name"] for m in self.queue_models):
-                    self.add_model_to_queue(model["name"], model["url"])
-                    items_added += 1
-                    
+
+        # Add missing nodes (url, folder) tuples from startup scan
+        for url, folder in missing_nodes:
+            if not any(n[0] == url for n in self.queue_nodes):
+                self.add_node_to_queue(url, folder)
+                items_added += 1
+
+        # Add missing models (name, url) tuples from startup scan
+        for name, url in missing_models:
+            if not any(m[0] == name for m in self.queue_models):
+                self.add_model_to_queue(name, url)
+                items_added += 1
+
         if items_added > 0:
             QMessageBox.information(self, "1-Click Install", f"{items_added} items added to the download queue.")
-            self.start_queue_download() # Automatically start the queue
+            self.start_queue_download()
         else:
-            QMessageBox.information(self, "1-Click Install", "No downloadable items found. Some models may need a manual source URL.")
+            QMessageBox.information(self, "1-Click Install", "All items are already in the queue.")
 
     def handle_auto_resolve(self):
         """Auto-resolve URLs for all missing models across all workflows."""
