@@ -651,40 +651,54 @@ class ManagerWindow(QMainWindow):
         
         bottom_layout.addStretch()
         
-        # Inline progress section styled for the dark theme
+        # Download progress panel — prominent, full-width above the table footer
         self.queue_progress_frame = QFrame()
-        self.queue_progress_frame.setFixedWidth(400)
-        self.queue_progress_frame.setStyleSheet("background-color: transparent; border: none;")
-        progress_layout = QHBoxLayout(self.queue_progress_frame)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        
+        self.queue_progress_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f0fdfa;
+                border: 2px solid #5eead4;
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        progress_main = QVBoxLayout(self.queue_progress_frame)
+        progress_main.setContentsMargins(12, 8, 12, 8)
+        progress_main.setSpacing(6)
+
+        # Top row: current item label + cancel button
+        progress_top = QHBoxLayout()
         self.queue_current_label = QLabel("Ready")
-        self.queue_current_label.setStyleSheet("color: #0d9488; font-size: 12px; font-weight: bold;")
-        self.queue_current_label.setFixedWidth(120)
-        progress_layout.addWidget(self.queue_current_label)
-        
+        self.queue_current_label.setStyleSheet("color: #0d9488; font-size: 13px; font-weight: bold;")
+        progress_top.addWidget(self.queue_current_label, stretch=1)
+
+        self.queue_cancel_btn = QPushButton("Cancel")
+        self.queue_cancel_btn.setFixedWidth(70)
+        self.queue_cancel_btn.setStyleSheet("""
+            QPushButton { background-color: #ef4444; color: white; border-radius: 6px; padding: 4px 10px; font-weight: bold; font-size: 12px; border: none; }
+            QPushButton:hover { background-color: #dc2626; }
+        """)
+        self.queue_cancel_btn.clicked.connect(self._cancel_download)
+        progress_top.addWidget(self.queue_cancel_btn)
+        progress_main.addLayout(progress_top)
+
+        # Progress bar — full width
         self.queue_progress_bar = QProgressBar()
         self.queue_progress_bar.setRange(0, 100)
         self.queue_progress_bar.setValue(0)
-        self.queue_progress_bar.setFixedHeight(14)
-        self.queue_progress_bar.setTextVisible(False)
+        self.queue_progress_bar.setFixedHeight(18)
+        self.queue_progress_bar.setTextVisible(True)
         self.queue_progress_bar.setStyleSheet("""
-            QProgressBar { background: #e2e8f0; border: none; border-radius: 6px; }
-            QProgressBar::chunk { background-color: #0d9488; border-radius: 6px; }
+            QProgressBar { background: #e2e8f0; border: none; border-radius: 8px; text-align: center; font-size: 11px; font-weight: bold; color: #1e293b; }
+            QProgressBar::chunk { background-color: #0d9488; border-radius: 8px; }
         """)
-        progress_layout.addWidget(self.queue_progress_bar)
-        
+        progress_main.addWidget(self.queue_progress_bar)
+
+        # Detail label
         self.queue_detail_label = QLabel("")
-        self.queue_detail_label.setStyleSheet("color: #64748b; font-size: 11px;")
-        progress_layout.addWidget(self.queue_detail_label)
+        self.queue_detail_label.setStyleSheet("color: #64748b; font-size: 12px;")
+        progress_main.addWidget(self.queue_detail_label)
 
-        self.queue_cancel_btn = QPushButton("✕")
-        self.queue_cancel_btn.setFixedSize(24, 24)
-        self.queue_cancel_btn.setStyleSheet("QPushButton { background-color: #ef4444; color: white; border-radius: 12px; font-weight: bold; } QPushButton:hover { background-color: #dc2626; }")
-        self.queue_cancel_btn.clicked.connect(self._cancel_download)
-        progress_layout.addWidget(self.queue_cancel_btn)
-
-        bottom_layout.addWidget(self.queue_progress_frame)
+        layout.addWidget(self.queue_progress_frame)
         self.queue_progress_frame.hide()  # Hidden until download starts
         
         layout.addLayout(bottom_layout)
@@ -2104,21 +2118,26 @@ class ManagerWindow(QMainWindow):
         QApplication.processEvents()
     
     def on_queue_item_progress(self, name, downloaded, total_bytes):
-        if total_bytes > 0:
+        if total_bytes and total_bytes > 0:
             mb_down = downloaded / (1024 * 1024)
             mb_total = total_bytes / (1024 * 1024)
-            self.queue_detail_label.setText(f"{mb_down:.1f} MB / {mb_total:.1f} MB")
-            
-            # Estimate percentage based on current item download + overall index progress
-            # To be accurate we'd need more logic, but this is ok for now.
+            pct = int(downloaded / total_bytes * 100)
+            self.queue_detail_label.setText(f"{mb_down:.1f} MB / {mb_total:.1f} MB ({pct}%)")
+            self.queue_progress_bar.setValue(pct)
+        elif downloaded and downloaded > 0:
+            mb_down = downloaded / (1024 * 1024)
+            self.queue_detail_label.setText(f"{mb_down:.1f} MB downloaded...")
         QApplication.processEvents()
     
     def on_queue_item_finished(self, name, success, message, warning):
-        status = "✓" if success else "✗"
-        display_msg = f"{status} {name}: {message}"
+        status = "✅" if success else "❌"
+        display_msg = f"{status} {name}"
+        short_msg = message[:80] if message else ""
         if warning:
-            display_msg += f" ⚠️ {warning[:50]}"
+            short_msg += f" ⚠️ {warning[:50]}"
+        self.queue_detail_label.setText(f"{status} {short_msg}")
         self.status_bar.showMessage(display_msg)
+        QApplication.processEvents()
     
     def on_queue_all_finished(self):
         # Check if more items were queued while worker was running
