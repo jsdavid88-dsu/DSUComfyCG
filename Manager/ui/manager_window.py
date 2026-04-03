@@ -99,8 +99,11 @@ class StartupWorker(QThread):
             
             for model in deps["models"]:
                 if not model["installed"] and model["url"]:
-                    if model["name"] not in all_missing_models:
-                        all_missing_models[model["name"]] = model["url"]
+                    # url can be a dict (info from check_model_in_db) — extract string
+                    raw_url = model["url"]
+                    url_str = raw_url.get("url", "") if isinstance(raw_url, dict) else raw_url
+                    if url_str and model["name"] not in all_missing_models:
+                        all_missing_models[model["name"]] = url_str
         
         results["missing_nodes"] = list(all_missing_nodes.items())
         results["missing_models"] = list(all_missing_models.items())
@@ -218,10 +221,15 @@ class DownloadQueueWorker(QThread):
             # If URL provided and not in DB, save to DB first so download_model can find it
             if url:
                 from core.checker import check_model_in_db, save_url_to_model_db, guess_model_folder
-                in_db, _ = check_model_in_db(name)
-                if not in_db:
-                    folder = guess_model_folder(name)
-                    save_url_to_model_db(name, url, folder)
+                # URL might be a dict (from check_model_installed info) — extract string
+                url_str = url
+                if isinstance(url, dict):
+                    url_str = url.get("url", "")
+                if url_str and isinstance(url_str, str):
+                    in_db, _ = check_model_in_db(name)
+                    if not in_db:
+                        folder = guess_model_folder(name)
+                        save_url_to_model_db(name, url_str, folder)
 
             success, msg = download_model(name, progress_cb)
             self.item_finished.emit(f"Model: {name[:30]}...", success, msg, "")
@@ -1831,12 +1839,23 @@ class ManagerWindow(QMainWindow):
             combined_models[name] = {"url": url_str, "folder": guess_model_folder(name)}
             
         # 2. Add all models used in all local workflows
+        from core.checker import check_model_in_db, EMBEDDED_MODEL_URLS
         workflows = scan_workflows()
         for wf in workflows:
             _, wf_models = parse_workflow(wf)
             for m in wf_models:
                 if m not in combined_models:
-                    combined_models[m] = {"url": "", "folder": guess_model_folder(m)}
+                    # Try to find URL from DB/embedded sources
+                    url = ""
+                    basename = os.path.basename(m.replace("\\", "/"))
+                    if basename in EMBEDDED_MODEL_URLS:
+                        emb = EMBEDDED_MODEL_URLS[basename]
+                        url = emb.get("url", "") if isinstance(emb, dict) else str(emb)
+                    if not url:
+                        in_db, info = check_model_in_db(m)
+                        if in_db and info:
+                            url = info.get("url", "") if isinstance(info, dict) else str(info)
+                    combined_models[m] = {"url": url, "folder": guess_model_folder(m)}
                     
         total = len(combined_models)
         existing = 0
