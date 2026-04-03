@@ -992,19 +992,31 @@ def download_model_parallel(url, target_path, total_size, progress_callback=None
             pass
         return False, "One or more chunks failed to download"
 
-def download_model(model_name, progress_callback=None):
+def download_model(model_name, progress_callback=None, url=None, folder=None):
     """Download a model from HuggingFace or direct URL.
-    
-    Download priority (v6):
-    1. huggingface_hub (if repo_id available)
-    2. aria2c (if available and URL present) - NEW
-    3. Built-in parallel download (if >50MB)
-    4. Sequential download (fallback)
+
+    Args:
+        model_name: Model filename
+        progress_callback: fn(downloaded_bytes, total_bytes)
+        url: Direct download URL (optional — if provided, skips DB lookup)
+        folder: Target folder type (optional — e.g., 'checkpoints', 'vae')
+
+    Download priority (v7):
+    1. Direct URL (if provided)
+    2. DB lookup (MODEL_DB, POPULAR_MODELS, EXT_MODEL_DB, API search)
+    3. huggingface_hub (if repo_id available)
+    4. aria2c (if available)
+    5. Built-in parallel download (if >50MB)
+    6. Sequential download (fallback)
     """
-    # Check if in our DB
-    in_db, info = check_model_in_db(model_name)
-    if not in_db:
-        return False, f"Model '{model_name}' not found in MODEL_DB"
+    # Build info from direct URL or DB lookup
+    if url and isinstance(url, str):
+        info = {"url": url, "folder": folder or guess_model_folder(model_name)}
+        logger.info(f"[Download] Using direct URL for {model_name}: {url[:60]}...")
+    else:
+        in_db, info = check_model_in_db(model_name)
+        if not in_db or not info:
+            return False, f"Model '{model_name}' not found — no download URL available"
     
     folder_key = info.get("folder", "checkpoints")
     # Download destination priority:

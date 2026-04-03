@@ -218,20 +218,15 @@ class DownloadQueueWorker(QThread):
             def progress_cb(downloaded, total_bytes):
                 self.item_progress.emit(name, downloaded, total_bytes)
 
-            # If URL provided and not in DB, save to DB first so download_model can find it
-            if url:
-                from core.checker import check_model_in_db, save_url_to_model_db, guess_model_folder
-                # URL might be a dict (from check_model_installed info) — extract string
-                url_str = url
-                if isinstance(url, dict):
-                    url_str = url.get("url", "")
-                if url_str and isinstance(url_str, str):
-                    in_db, _ = check_model_in_db(name)
-                    if not in_db:
-                        folder = guess_model_folder(name)
-                        save_url_to_model_db(name, url_str, folder)
+            # Normalize URL — might be dict from check_model_installed
+            url_str = url
+            if isinstance(url, dict):
+                url_str = url.get("url", "")
+            if not isinstance(url_str, str):
+                url_str = ""
 
-            success, msg = download_model(name, progress_cb)
+            # Pass URL directly to download_model — don't rely on DB lookup alone
+            success, msg = download_model(name, progress_cb, url=url_str or None)
             self.item_finished.emit(f"Model: {name[:30]}...", success, msg, "")
         
         self.all_finished.emit()
