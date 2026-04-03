@@ -1935,21 +1935,21 @@ class ManagerWindow(QMainWindow):
 
         items_added = 0
 
-        # Add missing nodes (url, folder) tuples from startup scan
+        # Add missing nodes — append directly to queue (don't trigger start yet)
         for url, folder in missing_nodes:
-            if not any(n[0] == url for n in self.queue_nodes):
-                self.add_node_to_queue(url, folder)
+            if (url, folder) not in self.queue_nodes:
+                self.queue_nodes.append((url, folder))
                 items_added += 1
 
-        # Add missing models (name, url) tuples from startup scan
+        # Add missing models — append directly to queue (don't trigger start yet)
         for name, url in missing_models:
-            if not any(m[0] == name for m in self.queue_models):
-                self.add_model_to_queue(name, url)
+            if (name, url) not in self.queue_models:
+                self.queue_models.append((name, url))
                 items_added += 1
 
         if items_added > 0:
             QMessageBox.information(self, "1-Click Install", f"{items_added} items added to the download queue.")
-            self.start_queue_download()
+            self.start_queue_download()  # Start ONCE with all items
         else:
             QMessageBox.information(self, "1-Click Install", "All items are already in the queue.")
 
@@ -2121,21 +2121,26 @@ class ManagerWindow(QMainWindow):
         self.status_bar.showMessage(display_msg)
     
     def on_queue_all_finished(self):
+        # Check if more items were queued while worker was running
+        if self.queue_nodes or self.queue_models:
+            self.start_queue_download()
+            return
+
         self.queue_progress_bar.setValue(100)
         self.queue_current_label.setText("Complete!")
         self.queue_detail_label.setText("")
         self.queue_progress_frame.hide()
-        
+
         self.run_btn.setEnabled(True)
-        
-        # Refresh the tabular UI to show EXSTS instead of MISSING
+
+        # Refresh the tabular UI to show EXISTS instead of MISSING
         self.populate_all_models_table()
 
         # Refresh download history
         self._refresh_download_history()
 
         self.status_bar.showMessage("All downloads complete! ✓")
-        
+
         QMessageBox.information(self, "Done", "All downloads complete!")
     
     def update_system_status(self):
