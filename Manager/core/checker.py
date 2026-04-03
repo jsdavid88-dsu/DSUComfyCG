@@ -513,28 +513,26 @@ def check_model_in_db(model_name):
             info["_method"] = "exact"
             return True, info
             
-    # 2. External MODEL_DB Check (exact)
+    # 2. External MODEL_DB Check (model-list.json — 527+ models with direct URLs)
     if EXT_MODEL_DB:
+        basename_lower = basename.lower()
         for model in EXT_MODEL_DB:
-            if model.get("filename") == basename:
-                logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB: {model['name']}")
+            m_filename = model.get("filename", "")
+            m_name = model.get("name", "")
+            # Match by filename (exact or case-insensitive), or by name
+            if (m_filename == basename or m_filename.lower() == basename_lower
+                    or m_name == basename or os.path.basename(m_filename) == basename
+                    or os.path.basename(m_filename).lower() == basename_lower):
+                # Use save_path for folder (reference format), fallback to type
+                folder = model.get("save_path", model.get("type", "checkpoints"))
+                logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB: {m_name} → {model.get('url', '')[:60]}")
                 return True, {
                     "url": model.get("url"),
-                    "filename": model.get("filename"),
-                    "folder": model.get("type", "checkpoints"),
-                    "description": f"{model.get('name')} (External)",
+                    "filename": m_filename,
+                    "folder": folder,
+                    "description": f"{m_name} (ComfyUI Manager DB)",
                     "_confidence": CONFIDENCE_EXACT,
-                    "_method": "exact"
-                }
-            if model.get("name") == basename:
-                logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB (by name): {model['name']}")
-                return True, {
-                    "url": model.get("url"),
-                    "filename": model.get("filename"),
-                    "folder": model.get("type", "checkpoints"),
-                    "description": f"{model.get('name')} (External)",
-                    "_confidence": CONFIDENCE_EXACT,
-                    "_method": "exact"
+                    "_method": "ext_model_db"
                 }
 
     # 3-4. Fuzzy Match + Alternative Format Names (NEW)
