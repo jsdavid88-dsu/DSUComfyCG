@@ -26,7 +26,7 @@ except ImportError:
 
 # New enhanced modules
 from core.fuzzy_matcher import enhanced_model_search, CONFIDENCE_EXACT, get_equivalent_dirs
-from core.search_engines import search_civitai, search_tavily, get_api_key, load_settings
+from core.search_engines import search_civitai, search_tavily, get_api_key, load_settings, record_download
 from core.aria2_downloader import smart_download, is_aria2_available
 from importlib.metadata import version, PackageNotFoundError
 try:
@@ -1046,6 +1046,7 @@ def download_model(model_name, progress_callback=None):
                 local_dir=target_dir,
                 local_dir_use_symlinks=False
             )
+            record_download(model_name, url or f"hf://{repo_id}/{hf_filename}", folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
             return True, f"Downloaded {filename}"
         except Exception as e:
             logger.warning(f"huggingface_hub failed: {e}, trying direct URL...")
@@ -1066,6 +1067,7 @@ def download_model(model_name, progress_callback=None):
         
         success, msg = smart_download(url, target_path, progress_callback, headers or None)
         if success:
+            record_download(model_name, url, folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
             return True, f"Downloaded {filename} (aria2)"
         else:
             logger.warning(f"aria2 failed: {msg}. Falling back to built-in downloader.")
@@ -1103,6 +1105,7 @@ def download_model(model_name, progress_callback=None):
             logger.info(f"Large file ({total_size // (1024*1024)}MB), attempting parallel download...")
             success, msg = download_model_parallel(url, target_path, total_size, progress_callback)
             if success:
+                record_download(model_name, url, folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
                 return True, f"Downloaded {filename} (Parallel)"
             else:
                 logger.warning(f"Parallel download failed: {msg}. Falling back to sequential.")
@@ -1131,12 +1134,14 @@ def download_model(model_name, progress_callback=None):
             os.remove(target_path)
         os.rename(partial_path, target_path)
 
+        record_download(model_name, url, folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
         return True, f"Downloaded {filename}"
 
     except Exception as e:
         # Keep .partial file for resume on next attempt; clean up target if exists
         if os.path.exists(target_path):
             os.remove(target_path)
+        record_download(model_name, url or "", folder_key or "", False, error_msg=str(e))
         return False, f"Error: {str(e)}"
 
 

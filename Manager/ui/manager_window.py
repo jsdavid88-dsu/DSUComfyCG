@@ -35,7 +35,7 @@ from core.checker import (
     ENVIRONMENTS, get_active_env, set_active_env,
     auto_resolve_all
 )
-from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily, get_cached_metadata, cache_model_metadata
+from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily, get_cached_metadata, cache_model_metadata, get_download_history
 from core.aria2_downloader import is_aria2_available
 from ui.url_input_dialog import ModelUrlInputDialog
 from ui.workflow_validator import WorkflowValidatorDialog
@@ -267,8 +267,8 @@ class ManagerWindow(QMainWindow):
         workflow_tab = self._create_workflow_models_tab()
         self.main_tabs.addTab(workflow_tab, "Workflow Models")
         
-        # Page 2: Downloads Placeholder (Will implement later if needed, or point to queue)
-        downloads_tab = QWidget()
+        # Page 2: Direct URL Download
+        downloads_tab = self._create_downloads_tab()
         self.main_tabs.addTab(downloads_tab, "Downloads")
         
         # Page 3: Local Model Browser
@@ -841,6 +841,102 @@ class ManagerWindow(QMainWindow):
             QMessageBox.information(self, "검증 완료", f"{filename}의 모든 모델/노드 URL이 등록 대기열에 추가되었습니다.\n[새로고침]을 눌러 다운로드를 진행하세요.")
             self.refresh_all()
     
+    def _create_downloads_tab(self):
+        """Create the Direct URL Download tab."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # Title
+        title = QLabel("Direct URL Download")
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #1e293b;")
+        layout.addWidget(title)
+
+        desc = QLabel("Paste a model download URL from HuggingFace, CivitAI, or any direct link.")
+        desc.setStyleSheet("color: #64748b; font-size: 13px;")
+        layout.addWidget(desc)
+
+        # URL input section
+        url_frame = QFrame()
+        url_frame.setStyleSheet("background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px;")
+        url_layout = QVBoxLayout(url_frame)
+
+        url_row = QHBoxLayout()
+        self.direct_url_input = QLineEdit()
+        self.direct_url_input.setPlaceholderText("https://huggingface.co/.../model.safetensors")
+        self.direct_url_input.setStyleSheet("padding: 10px; font-size: 14px; border: 1px solid #cbd5e1; border-radius: 8px;")
+        url_row.addWidget(self.direct_url_input, stretch=1)
+
+        check_btn = QPushButton("Check URL")
+        check_btn.setStyleSheet("""
+            QPushButton { background-color: #3b82f6; color: white; padding: 10px 20px; border-radius: 8px; font-weight: bold; font-size: 13px; border: none; }
+            QPushButton:hover { background-color: #2563eb; }
+        """)
+        check_btn.clicked.connect(self._check_direct_url)
+        url_row.addWidget(check_btn)
+        url_layout.addLayout(url_row)
+
+        # Detected info section
+        info_layout = QHBoxLayout()
+        info_layout.setSpacing(15)
+
+        # Filename
+        fn_layout = QVBoxLayout()
+        fn_layout.addWidget(QLabel("Filename:"))
+        self.direct_filename = QLineEdit()
+        self.direct_filename.setPlaceholderText("Auto-detected from URL")
+        self.direct_filename.setStyleSheet("padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px;")
+        fn_layout.addWidget(self.direct_filename)
+        info_layout.addLayout(fn_layout, stretch=2)
+
+        # Model Type / Folder
+        type_layout = QVBoxLayout()
+        type_layout.addWidget(QLabel("Target Folder:"))
+        self.direct_folder = QComboBox()
+        self.direct_folder.addItems([
+            "checkpoints", "loras", "vae", "clip", "unet", "controlnet",
+            "clip_vision", "upscale_models", "embeddings", "diffusion_models",
+            "text_encoders", "sam2", "LLM", "audio", "ipadapter"
+        ])
+        self.direct_folder.setStyleSheet("padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px;")
+        type_layout.addWidget(self.direct_folder)
+        info_layout.addLayout(type_layout, stretch=1)
+
+        url_layout.addLayout(info_layout)
+
+        # Download button
+        self.direct_download_btn = QPushButton("⬇️ Download")
+        self.direct_download_btn.setStyleSheet("""
+            QPushButton { background-color: #10b981; color: white; padding: 12px; border-radius: 8px; font-size: 16px; font-weight: bold; border: none; }
+            QPushButton:hover { background-color: #059669; }
+            QPushButton:disabled { background-color: #94a3b8; }
+        """)
+        self.direct_download_btn.clicked.connect(self._download_direct_url)
+        url_layout.addWidget(self.direct_download_btn)
+
+        layout.addWidget(url_frame)
+
+        # Download History table
+        history_label = QLabel("Download History")
+        history_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e293b; margin-top: 10px;")
+        layout.addWidget(history_label)
+
+        self.history_table = QTableWidget(0, 5)
+        self.history_table.setHorizontalHeaderLabels(["Date", "Model", "Status", "Size", "Source"])
+        self.history_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.history_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.history_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.history_table.verticalHeader().setVisible(False)
+        self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.history_table.setShowGrid(False)
+        layout.addWidget(self.history_table, stretch=1)
+
+        return tab
+
     def _create_settings_tab(self):
         """Create the Settings tab (NEW)."""
         widget = QWidget()
@@ -856,7 +952,38 @@ class ManagerWindow(QMainWindow):
         title = QLabel("⚙️ 설정")
         title.setStyleSheet("color: #7dcfff; font-size: 18px; font-weight: bold;")
         layout.addWidget(title)
-        
+
+        # Help Section
+        help_frame = QFrame()
+        help_frame.setStyleSheet("background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 15px;")
+        help_layout = QVBoxLayout(help_frame)
+
+        help_title = QLabel("Quick Guide")
+        help_title.setStyleSheet("font-size: 16px; font-weight: bold; color: #1e293b;")
+        help_layout.addWidget(help_title)
+
+        help_text = QLabel(
+            "<b>Workflow Models Tab:</b> 워크플로우에 필요한 모델을 자동 감지합니다. "
+            "<b>Auto-Resolve</b>를 클릭하면 누락 모델의 URL을 자동 검색합니다.<br><br>"
+            "<b>Downloads Tab:</b> URL을 직접 붙여넣어 모델을 다운로드합니다. "
+            "HuggingFace, CivitAI 등 직접 링크를 지원합니다.<br><br>"
+            "<b>Local Browser Tab:</b> 설치된 모델을 폴더별로 탐색하고, "
+            "사용되지 않는 모델을 찾아 정리할 수 있습니다.<br><br>"
+            "<b>Workflows Tab:</b> 워크플로우 파일을 관리하고 의존성을 검증합니다.<br><br>"
+            "<b>API Keys:</b> HuggingFace 토큰(gated 모델용), CivitAI 키(다운로드용), "
+            "Tavily 키(AI 검색용)를 아래에서 설정하세요.<br><br>"
+            "<b>문제 해결:</b><br>"
+            "• 모델 다운로드 실패 → HuggingFace 토큰 확인<br>"
+            "• 노드 설치 실패 → 인터넷 연결 확인, git 설치 상태 확인<br>"
+            "• GPU 인식 안됨 → NVIDIA 드라이버 업데이트<br>"
+            "• 포트 충돌 → 다른 ComfyUI 프로세스 종료"
+        )
+        help_text.setWordWrap(True)
+        help_text.setStyleSheet("color: #475569; font-size: 13px; line-height: 1.6;")
+        help_layout.addWidget(help_text)
+
+        layout.addWidget(help_frame)
+
         # --- API Keys Section ---
         api_group = QGroupBox("API Keys")
         api_layout = QFormLayout(api_group)
@@ -1044,6 +1171,81 @@ class ManagerWindow(QMainWindow):
         """Clear the NOT_FOUND cache."""
         clear_not_found_cache()
         QMessageBox.information(self, "캐시 초기화", "NOT_FOUND 캐시가 초기화되었습니다.\n다음 검색 시 모든 모델을 다시 찾습니다.")
+
+    def _check_direct_url(self):
+        """Auto-detect filename and type from a pasted URL."""
+        url = self.direct_url_input.text().strip()
+        if not url:
+            return
+
+        # Extract filename from URL
+        from urllib.parse import urlparse, unquote
+        parsed = urlparse(url)
+        path = unquote(parsed.path)
+        filename = path.split('/')[-1].split('?')[0]
+
+        if filename:
+            self.direct_filename.setText(filename)
+            # Auto-detect folder type
+            folder = guess_model_folder(filename)
+            idx = self.direct_folder.findText(folder)
+            if idx >= 0:
+                self.direct_folder.setCurrentIndex(idx)
+
+        self.status_bar.showMessage(f"Detected: {filename} → {self.direct_folder.currentText()}")
+
+    def _download_direct_url(self):
+        """Download a model from the direct URL input."""
+        url = self.direct_url_input.text().strip()
+        filename = self.direct_filename.text().strip()
+        folder = self.direct_folder.currentText()
+
+        if not url:
+            QMessageBox.warning(self, "Error", "Please enter a URL.")
+            return
+        if not filename:
+            QMessageBox.warning(self, "Error", "Please enter or auto-detect a filename.")
+            return
+
+        # Save to DB and queue
+        save_url_to_model_db(filename, url, folder)
+        self.add_model_to_queue(filename, url)
+
+        self.status_bar.showMessage(f"Queued: {filename}")
+        self.direct_url_input.clear()
+        self.direct_filename.clear()
+
+        # Refresh history
+        self._refresh_download_history()
+
+    def _refresh_download_history(self):
+        """Refresh the download history table."""
+        history = get_download_history()
+
+        self.history_table.setRowCount(0)
+        for entry in reversed(history[-50:]):  # Show last 50, newest first
+            row = self.history_table.rowCount()
+            self.history_table.insertRow(row)
+
+            self.history_table.setItem(row, 0, QTableWidgetItem(entry.get("date", "")))
+            self.history_table.setItem(row, 1, QTableWidgetItem(entry.get("name", "")))
+
+            status = "✅ Success" if entry.get("success") else "❌ Failed"
+            status_item = QTableWidgetItem(status)
+            status_item.setForeground(QColor("#10b981" if entry.get("success") else "#ef4444"))
+            self.history_table.setItem(row, 2, status_item)
+
+            size = entry.get("size_bytes", 0)
+            if size > 1024*1024*1024:
+                size_text = f"{size/1024/1024/1024:.1f} GB"
+            elif size > 1024*1024:
+                size_text = f"{size/1024/1024:.1f} MB"
+            else:
+                size_text = f"{size/1024:.0f} KB" if size > 0 else ""
+            self.history_table.setItem(row, 3, QTableWidgetItem(size_text))
+
+            url = entry.get("url", "")
+            self.history_table.setItem(row, 4, QTableWidgetItem(url[:60] + "..." if len(url) > 60 else url))
 
     def _add_model_path(self):
         dir_path = QFileDialog.getExistingDirectory(self, "공유 모델 루트 폴더 선택 (checkpoints, loras 등이 있는 상위 폴더)")
@@ -1475,7 +1677,10 @@ class ManagerWindow(QMainWindow):
         
         # Populate all models in the Tabular interface!
         self.populate_all_models_table()
-        
+
+        # Populate download history
+        self._refresh_download_history()
+
         n_nodes = len(results["missing_nodes"])
         n_models = len(results["missing_models"])
         
@@ -1931,7 +2136,9 @@ class ManagerWindow(QMainWindow):
         # Refresh the tabular UI to show EXSTS instead of MISSING
         self.populate_all_models_table()
 
-        
+        # Refresh download history
+        self._refresh_download_history()
+
         self.status_bar.showMessage("All downloads complete! ✓")
         
         QMessageBox.information(self, "Done", "All downloads complete!")

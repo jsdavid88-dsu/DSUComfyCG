@@ -432,5 +432,105 @@ def advanced_search_tavily(model_name, api_key=None):
     return []
 
 
+# ─── Download History ─────────────────────────────────────────────────────────
+
+_DOWNLOAD_HISTORY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache", "download_history.json")
+_download_history = []
+
+def load_download_history():
+    """Load download history from disk."""
+    global _download_history
+    try:
+        if os.path.exists(_DOWNLOAD_HISTORY_PATH):
+            with open(_DOWNLOAD_HISTORY_PATH, 'r', encoding='utf-8') as f:
+                _download_history = json.load(f)
+    except Exception:
+        _download_history = []
+
+def save_download_history():
+    """Save download history to disk."""
+    try:
+        os.makedirs(os.path.dirname(_DOWNLOAD_HISTORY_PATH), exist_ok=True)
+        with open(_DOWNLOAD_HISTORY_PATH, 'w', encoding='utf-8') as f:
+            json.dump(_download_history, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+def record_download(model_name, url, folder, success, size_bytes=0, error_msg=""):
+    """Record a download attempt in history."""
+    _download_history.append({
+        "name": model_name,
+        "url": url,
+        "folder": folder,
+        "success": success,
+        "size_bytes": size_bytes,
+        "error": error_msg,
+        "timestamp": time.time(),
+        "date": time.strftime("%Y-%m-%d %H:%M:%S")
+    })
+    # Keep last 500 entries
+    if len(_download_history) > 500:
+        _download_history[:] = _download_history[-500:]
+    save_download_history()
+
+def get_download_history():
+    """Get the full download history list."""
+    return list(_download_history)
+
+
+# ─── CivitAI Hash Lookup ─────────────────────────────────────────────────────
+
+def lookup_civitai_by_hash(file_path, api_key=None):
+    """Look up a model on CivitAI by its SHA256 hash.
+    Skips files over 2GB due to hash computation time.
+    Returns dict with model info or None."""
+    import hashlib
+
+    if not os.path.exists(file_path):
+        return None
+
+    file_size = os.path.getsize(file_path)
+    if file_size > 2 * 1024 * 1024 * 1024:  # Skip >2GB files
+        return None
+
+    # Calculate SHA256
+    sha256 = hashlib.sha256()
+    try:
+        with open(file_path, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                sha256.update(chunk)
+    except Exception:
+        return None
+
+    file_hash = sha256.hexdigest().upper()
+
+    try:
+        import requests as _requests
+        headers = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        resp = _requests.get(
+            f"https://civitai.com/api/v1/model-versions/by-hash/{file_hash}",
+            headers=headers,
+            timeout=15
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return {
+                "model_name": data.get("model", {}).get("name", ""),
+                "version_name": data.get("name", ""),
+                "model_id": data.get("modelId"),
+                "version_id": data.get("id"),
+                "download_url": data.get("downloadUrl", ""),
+                "hash": file_hash
+            }
+    except Exception as e:
+        logging.warning(f"CivitAI hash lookup failed: {e}")
+
+    return None
+
+
 # ─── Module Init ──────────────────────────────────────────────────────────────
 load_metadata_cache()
+load_download_history()
