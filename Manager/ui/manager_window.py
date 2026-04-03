@@ -99,9 +99,15 @@ class StartupWorker(QThread):
             
             for model in deps["models"]:
                 if not model["installed"] and model["url"]:
-                    # url can be a dict (info from check_model_in_db) — extract string
-                    raw_url = model["url"]
-                    url_str = raw_url.get("url", "") if isinstance(raw_url, dict) else raw_url
+                    # url can be a dict (info from check_model_in_db) with "url" or "repo_id"+"filename"
+                    raw = model["url"]
+                    if isinstance(raw, dict):
+                        url_str = raw.get("url", "")
+                        # If no direct URL but has repo_id, construct HuggingFace URL
+                        if not url_str and raw.get("repo_id") and raw.get("filename"):
+                            url_str = f"https://huggingface.co/{raw['repo_id']}/resolve/main/{raw['filename']}"
+                    else:
+                        url_str = raw if isinstance(raw, str) else ""
                     if url_str and model["name"] not in all_missing_models:
                         all_missing_models[model["name"]] = url_str
         
@@ -1848,8 +1854,11 @@ class ManagerWindow(QMainWindow):
                         url = emb.get("url", "") if isinstance(emb, dict) else str(emb)
                     if not url:
                         in_db, info = check_model_in_db(m)
-                        if in_db and info:
-                            url = info.get("url", "") if isinstance(info, dict) else str(info)
+                        if in_db and info and isinstance(info, dict):
+                            url = info.get("url", "")
+                            # Construct URL from repo_id if no direct url
+                            if not url and info.get("repo_id") and info.get("filename"):
+                                url = f"https://huggingface.co/{info['repo_id']}/resolve/main/{info['filename']}"
                     combined_models[m] = {"url": url, "folder": guess_model_folder(m)}
                     
         total = len(combined_models)

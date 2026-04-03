@@ -1213,7 +1213,15 @@ def parse_workflow(filename):
         definitions = data.get("definitions") if isinstance(data, dict) else None
         if isinstance(definitions, dict):
             subgraphs = definitions.get("subgraphs")
-            if isinstance(subgraphs, dict):
+            if isinstance(subgraphs, list):
+                # Actual workflow format: subgraphs is a list
+                for sg_data in subgraphs:
+                    if isinstance(sg_data, dict):
+                        for node in sg_data.get("nodes", []):
+                            if isinstance(node, dict):
+                                nodes.append(node)
+            elif isinstance(subgraphs, dict):
+                # Fallback: subgraphs as dict
                 for sg_name, sg_data in subgraphs.items():
                     if isinstance(sg_data, dict):
                         for node in sg_data.get("nodes", []):
