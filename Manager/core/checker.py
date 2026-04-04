@@ -1367,8 +1367,9 @@ def check_model_installed(model_name):
     # Get basename (without subfolder like Kijai_WAN/)
     basename = os.path.basename(model_name.replace("\\", "/"))
     
-    # Search all model directories (including extra paths + equivalent dirs)
-    search_paths = [get_models_path()]
+    # Search all model directories (shared models + env local + extra paths + equivalent dirs)
+    shared = get_shared_models_path()
+    search_paths = [shared, get_models_path()]
     # Also search equivalent directories (e.g., text_encoders <-> clip)
     models_root = get_models_path()
     if models_root and os.path.isdir(models_root):

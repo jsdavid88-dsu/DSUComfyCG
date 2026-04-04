@@ -2120,7 +2120,8 @@ class ManagerWindow(QMainWindow):
         
         self.queue_progress_frame.show()
         self.run_btn.setEnabled(False)
-        
+        self._download_results = []  # Track results for summary
+
         # Pass a copy so we can clear our local queue or manage it
         self.download_worker = DownloadQueueWorker(list(self.queue_nodes), list(self.queue_models))
         self.download_worker.item_started.connect(self.on_queue_item_started)
@@ -2160,6 +2161,9 @@ class ManagerWindow(QMainWindow):
             short_msg += f" ⚠️ {warning[:50]}"
         self.queue_detail_label.setText(f"{status} {short_msg}")
         self.status_bar.showMessage(display_msg)
+        # Track for summary
+        if hasattr(self, '_download_results'):
+            self._download_results.append({"name": name, "success": success, "message": message})
         QApplication.processEvents()
     
     def on_queue_all_finished(self):
@@ -2183,7 +2187,16 @@ class ManagerWindow(QMainWindow):
 
         self.status_bar.showMessage("All downloads complete! ✓")
 
-        QMessageBox.information(self, "Done", "All downloads complete!")
+        # Show detailed summary
+        results = getattr(self, '_download_results', [])
+        ok = [r for r in results if r["success"]]
+        fail = [r for r in results if not r["success"]]
+        summary = f"Success: {len(ok)}\nFailed: {len(fail)}"
+        if fail:
+            summary += "\n\nFailed items:\n"
+            for r in fail[:20]:
+                summary += f"  • {r['name']}: {r['message'][:60]}\n"
+        QMessageBox.information(self, "Download Complete", summary)
     
     def update_system_status(self):
         status = get_system_status()
