@@ -323,9 +323,13 @@ class ManagerWindow(QMainWindow):
         
         # Page 1: Workflow Models
         workflow_tab = self._create_workflow_models_tab()
-        self.main_tabs.addTab(workflow_tab, "Workflow Models")
-        
-        # Page 2: Direct URL Download
+        self.main_tabs.addTab(workflow_tab, "Models")
+
+        # Page 2: Nodes
+        nodes_tab = self._create_nodes_tab()
+        self.main_tabs.addTab(nodes_tab, "Nodes")
+
+        # Page 3: Direct URL Download
         downloads_tab = self._create_downloads_tab()
         self.main_tabs.addTab(downloads_tab, "Downloads")
         
@@ -683,55 +687,6 @@ class ManagerWindow(QMainWindow):
 
         layout.addWidget(banner_frame)
 
-        # 2b. Missing Custom Nodes panel (UI-1) — appears above models table.
-        # Hidden when _startup_missing_nodes is empty.
-        self.missing_nodes_frame = QFrame()
-        self.missing_nodes_frame.setStyleSheet(
-            "QFrame { background-color: #fff7ed; border: 1px solid #fdba74; border-radius: 10px; }"
-        )
-        mn_layout = QVBoxLayout(self.missing_nodes_frame)
-        mn_layout.setContentsMargins(14, 10, 14, 10)
-        mn_layout.setSpacing(8)
-
-        mn_header = QHBoxLayout()
-        self.missing_nodes_title = QLabel("\u26a0 Missing Custom Nodes (0)")
-        self.missing_nodes_title.setStyleSheet(
-            "color: #9a3412; font-size: 14px; font-weight: bold; background: transparent; border: none;"
-        )
-        mn_header.addWidget(self.missing_nodes_title)
-        mn_header.addStretch()
-
-        self.install_all_nodes_btn = QPushButton("Install All Nodes")
-        self.install_all_nodes_btn.setCursor(Qt.PointingHandCursor)
-        self.install_all_nodes_btn.setStyleSheet(
-            "QPushButton { background-color: #ef4444; color: white; border: none; border-radius: 6px; "
-            "padding: 6px 14px; font-weight: bold; font-size: 12px; }"
-            "QPushButton:hover { background-color: #dc2626; }"
-        )
-        self.install_all_nodes_btn.clicked.connect(self._install_all_missing_nodes)
-        mn_header.addWidget(self.install_all_nodes_btn)
-        mn_layout.addLayout(mn_header)
-
-        self.missing_nodes_table = QTableWidget()
-        self.missing_nodes_table.setColumnCount(3)
-        self.missing_nodes_table.setHorizontalHeaderLabels(["Folder", "Install URL", "Action"])
-        self.missing_nodes_table.horizontalHeader().setStretchLastSection(False)
-        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.missing_nodes_table.verticalHeader().setVisible(False)
-        self.missing_nodes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.missing_nodes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.missing_nodes_table.setShowGrid(False)
-        self.missing_nodes_table.setMaximumHeight(180)
-        self.missing_nodes_table.setStyleSheet(
-            "QTableWidget { background: white; border: 1px solid #fed7aa; border-radius: 6px; }"
-        )
-        mn_layout.addWidget(self.missing_nodes_table)
-
-        layout.addWidget(self.missing_nodes_frame)
-        self.missing_nodes_frame.hide()  # Shown by _populate_missing_nodes_table when count > 0
-        
         # 3. Table View
         self.models_table = QTableWidget()
         self.models_table.setColumnCount(6)
@@ -852,9 +807,74 @@ class ManagerWindow(QMainWindow):
         layout.addLayout(bottom_layout)
         
         return tab
-    
 
-    
+    def _create_nodes_tab(self):
+        """Create the Nodes tab — missing custom nodes + installed nodes overview."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
+
+        # Header
+        header_layout = QHBoxLayout()
+        title = QLabel("Custom Nodes")
+        title.setStyleSheet("color: #0f172a; font-size: 18px; font-weight: bold;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+
+        self.install_all_nodes_btn = QPushButton("Install All Missing Nodes")
+        self.install_all_nodes_btn.setCursor(Qt.PointingHandCursor)
+        self.install_all_nodes_btn.setStyleSheet(
+            "QPushButton { background-color: #ef4444; color: white; border: none; border-radius: 8px; "
+            "padding: 8px 18px; font-weight: bold; font-size: 13px; }"
+            "QPushButton:hover { background-color: #dc2626; }"
+        )
+        self.install_all_nodes_btn.clicked.connect(self._install_all_missing_nodes)
+        self.install_all_nodes_btn.hide()
+        header_layout.addWidget(self.install_all_nodes_btn)
+        layout.addLayout(header_layout)
+
+        # Missing nodes summary banner
+        self.missing_nodes_banner = QFrame()
+        self.missing_nodes_banner.setStyleSheet(
+            "QFrame { background-color: #fff7ed; border: 1px solid #fdba74; border-radius: 10px; }"
+        )
+        banner_inner = QHBoxLayout(self.missing_nodes_banner)
+        banner_inner.setContentsMargins(16, 12, 16, 12)
+        self.missing_nodes_title = QLabel("No missing custom nodes detected.")
+        self.missing_nodes_title.setStyleSheet(
+            "color: #9a3412; font-size: 14px; font-weight: bold; background: transparent; border: none;"
+        )
+        banner_inner.addWidget(self.missing_nodes_title)
+        layout.addWidget(self.missing_nodes_banner)
+
+        # Missing nodes table — full height (no maxHeight cap)
+        self.missing_nodes_table = QTableWidget()
+        self.missing_nodes_table.setColumnCount(3)
+        self.missing_nodes_table.setHorizontalHeaderLabels(["Folder", "Install URL", "Action"])
+        self.missing_nodes_table.horizontalHeader().setStretchLastSection(False)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.missing_nodes_table.verticalHeader().setVisible(False)
+        self.missing_nodes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.missing_nodes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.missing_nodes_table.setShowGrid(False)
+        self.missing_nodes_table.setStyleSheet(
+            "QTableWidget { background: white; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px; }"
+            "QTableWidget::item { padding: 4px 12px; border-bottom: 1px solid #f1f5f9; }"
+            "QHeaderView::section { background-color: #f8fafc; color: #64748b; padding: 10px; "
+            "border: none; border-bottom: 1px solid #e2e8f0; font-weight: bold; }"
+        )
+        layout.addWidget(self.missing_nodes_table, stretch=1)
+
+        # Footer info
+        self.nodes_footer = QLabel("")
+        self.nodes_footer.setStyleSheet("color: #64748b; font-size: 12px;")
+        layout.addWidget(self.nodes_footer)
+
+        return tab
+
     def _create_model_browser_tab(self):
         """Create the Local Model Browser tab (NEW)."""
         widget = QWidget()
@@ -2168,28 +2188,43 @@ class ManagerWindow(QMainWindow):
             action_layout.setContentsMargins(2, 2, 2, 2)
             action_layout.setSpacing(4)
 
-            btn_style = """
-                QPushButton { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
-            """
-
             if url:
                 if not is_installed: downloadable += 1
                 dl_btn = QPushButton("Download" if not is_installed else "Re-download")
-                dl_btn.setStyleSheet(btn_style + "QPushButton { background-color: #10b981; color: white; } QPushButton:hover { background-color: #059669; }")
+                dl_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #10b981; color: white; border: none;
+                        padding: 6px 14px; border-radius: 6px;
+                        font-size: 12px; font-weight: bold; min-width: 80px; min-height: 26px;
+                    }
+                    QPushButton:hover { background-color: #059669; }
+                """)
                 dl_btn.setCursor(Qt.PointingHandCursor)
                 dl_btn.clicked.connect(lambda c, n=name, u=url: self.add_model_to_queue(n, u))
                 action_layout.addWidget(dl_btn)
             else:
-                # Manual URL button
-                url_btn = QPushButton("URL")
-                url_btn.setStyleSheet(btn_style + "QPushButton { background-color: #f59e0b; color: white; } QPushButton:hover { background-color: #d97706; }")
+                url_btn = QPushButton("URL 입력")
+                url_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #f59e0b; color: white; border: none;
+                        padding: 6px 14px; border-radius: 6px;
+                        font-size: 12px; font-weight: bold; min-width: 70px; min-height: 26px;
+                    }
+                    QPushButton:hover { background-color: #d97706; }
+                """)
                 url_btn.setCursor(Qt.PointingHandCursor)
                 url_btn.clicked.connect(lambda c, n=name: self.show_url_input_dialog(n))
                 action_layout.addWidget(url_btn)
 
-                # Search button (fuzzy + API search)
                 search_btn = QPushButton("Search")
-                search_btn.setStyleSheet(btn_style + "QPushButton { background-color: #6366f1; color: white; } QPushButton:hover { background-color: #4f46e5; }")
+                search_btn.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6366f1; color: white; border: none;
+                        padding: 6px 14px; border-radius: 6px;
+                        font-size: 12px; font-weight: bold; min-width: 70px; min-height: 26px;
+                    }
+                    QPushButton:hover { background-color: #4f46e5; }
+                """)
                 search_btn.setCursor(Qt.PointingHandCursor)
                 search_btn.clicked.connect(lambda c, n=name, sb=search_btn: self._search_model_url(n, sb))
                 action_layout.addWidget(search_btn)
@@ -2244,13 +2279,17 @@ class ManagerWindow(QMainWindow):
 
         self.missing_nodes_table.setRowCount(0)
         count = len(missing)
-        self.missing_nodes_title.setText(f"\u26a0 Missing Custom Nodes ({count})")
-
         if count == 0:
-            self.missing_nodes_frame.hide()
+            self.missing_nodes_title.setText("No missing custom nodes detected.")
+            self.install_all_nodes_btn.hide()
+            if hasattr(self, "nodes_footer"):
+                self.nodes_footer.setText("All custom nodes are installed.")
             return
 
-        self.missing_nodes_frame.show()
+        self.missing_nodes_title.setText(f"\u26a0 {count} missing custom nodes")
+        self.install_all_nodes_btn.show()
+        if hasattr(self, "nodes_footer"):
+            self.nodes_footer.setText(f"Total: {count} missing — click Install to add individually, or Install All.")
         for i, (url, folder) in enumerate(missing):
             self.missing_nodes_table.insertRow(i)
 
@@ -2279,7 +2318,8 @@ class ManagerWindow(QMainWindow):
             install_btn.setCursor(Qt.PointingHandCursor)
             install_btn.setStyleSheet(
                 "QPushButton { background-color: #10b981; color: white; border: none; "
-                "border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 11px; }"
+                "border-radius: 6px; padding: 6px 14px; font-weight: bold; font-size: 12px; "
+                "min-width: 70px; min-height: 26px; }"
                 "QPushButton:hover { background-color: #059669; }"
             )
             install_btn.clicked.connect(
@@ -2487,7 +2527,7 @@ class ManagerWindow(QMainWindow):
             btn.setEnabled(True)
             if url:
                 btn.setText("Found")
-                btn.setStyleSheet("QPushButton { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; background-color: #10b981; color: white; }")
+                btn.setStyleSheet("QPushButton { padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: bold; min-width: 70px; min-height: 26px; background-color: #10b981; color: white; border: none; } QPushButton:hover { background-color: #059669; }")
                 self.add_model_to_queue(name, url)
                 self.status_bar.showMessage(f"Found URL for {name[:40]}... Added to queue.")
                 # Cache the result
