@@ -7,6 +7,27 @@ echo ========================================================
 echo.
 
 :: ============================================================
+:: NESTED FOLDER DETECTION: auto-flatten DSUComfyCG/DSUComfyCG/ or DSUComfyCG-main/
+:: ============================================================
+if exist "%~dp0DSUComfyCG\Manager\main.py" (
+    echo [WARN] Nested "DSUComfyCG\DSUComfyCG\" detected. Flattening...
+    robocopy "%~dp0DSUComfyCG" "%~dp0" /E /MOVE /NFL /NDL /NJH /NJS >nul
+    rd /s /q "%~dp0DSUComfyCG" >nul 2>&1
+    echo [OK] Flattened. Please re-run DSU_Manager.bat.
+    pause
+    exit /b
+)
+if exist "%~dp0DSUComfyCG-main\Manager\main.py" (
+    echo [WARN] ZIP-extracted "DSUComfyCG-main\" detected. Flattening...
+    robocopy "%~dp0DSUComfyCG-main" "%~dp0" /E /MOVE /NFL /NDL /NJH /NJS >nul
+    rd /s /q "%~dp0DSUComfyCG-main" >nul 2>&1
+    echo [OK] Flattened. Please re-run DSU_Manager.bat.
+    pause
+    exit /b
+)
+echo.
+
+:: ============================================================
 :: GIT RESOLUTION: Portable Git -> System Git -> Auto-install
 :: ============================================================
 set "GIT_EXE=git"

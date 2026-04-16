@@ -73,9 +73,10 @@ def install_addon(addon_id, python_executable, comfy_path, callback=None):
             if callback:
                 callback("Cloning ComfyUI-nunchaku repository...")
             try:
-                subprocess.run(["git", "clone", "https://github.com/nunchaku-ai/ComfyUI-nunchaku", custom_nodes_path], check=True, capture_output=True)
+                subprocess.run(["git", "clone", "--", "https://github.com/nunchaku-ai/ComfyUI-nunchaku", custom_nodes_path], check=True, capture_output=True, encoding='utf-8', errors='replace')
             except subprocess.CalledProcessError as e:
-                return False, f"Failed to git clone ComfyUI-nunchaku: {e.stderr.decode('utf-8')}"
+                stderr_text = e.stderr if isinstance(e.stderr, str) else (e.stderr.decode('utf-8', errors='replace') if e.stderr else '')
+                return False, f"Failed to git clone ComfyUI-nunchaku: {stderr_text}"
                 
         # Install exact Numpy version required by Nunchaku
         _run_pip(["numpy==1.26.4", "--force-reinstall"], "Nunchaku Numpy Requirement")

@@ -17,6 +17,7 @@ except ImportError:
 import re
 import time
 import threading
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor
 
 try:
@@ -318,6 +319,80 @@ Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
 NODE_DB = {}
 NODE_DB_CACHE_FILE = os.path.join(CACHE_DIR, "node_db_cache.json")
 
+# ---------------------------------------------------------------------------
+# ModelInfo — unified shape for DB entries + URL resolution (Wave 2 refactor)
+# ---------------------------------------------------------------------------
+# Prior to this, MODEL_DB / EXT_MODEL_DB / POPULAR_MODELS / check_model_installed
+# each produced slightly different dict shapes ({repo_id, filename, ...} vs
+# {url, save_path, ...}), and URL construction was duplicated in 4 sites.
+# That drift caused commits 7f456dc, 49e3d8b, 04c74b8, b3d54ef. `ModelInfo`
+# and `resolve_download_url` below are the single source of truth.
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class ModelInfo:
+    name: str                          # display name / filename
+    category: str = "checkpoints"      # "checkpoints", "loras", "vae", etc.
+    repo_id: Optional[str] = None      # HuggingFace repo_id (e.g. "stabilityai/sdxl")
+    filename: Optional[str] = None     # specific file within repo
+    url: Optional[str] = None          # direct URL (CivitAI, HF, etc.)
+    save_path: Optional[str] = None    # relative save path hint (from EXT_MODEL_DB)
+    tiny: bool = False                 # opt-out for <1KB size warning (legit tiny files)
+    # Optional future: sha256, size, license, etc.
+
+    @classmethod
+    def from_dict(cls, d, name_fallback: str = "") -> "ModelInfo":
+        """Build a ModelInfo from the loose dict shapes used across the codebase.
+
+        Handles all three legacy shapes:
+          - MODEL_DB entries:      {"repo_id": "...", "filename": "...", "folder": "..."}
+          - EXT_MODEL_DB entries:  {"url": "...", "filename": "...", "save_path": "...", "type": "..."}
+          - POPULAR_MODELS values: {"url": "..."}  OR  a bare URL string
+          - check_model_in_db output: {"url"|"repo_id"+"filename", "folder", ...}
+
+        `name_fallback` is used when the dict has no "name"/"filename" (e.g.
+        when iterating MODEL_DB.items() the dict key is the name).
+        """
+        if not isinstance(d, dict):
+            # Bare URL string case (some POPULAR_MODELS entries)
+            return cls(name=name_fallback, url=str(d) if d else None)
+
+        name = d.get("name") or d.get("filename") or name_fallback or ""
+        # Category: prefer "folder" (runtime key), then "save_path" (EXT format), then "type"
+        category = d.get("folder") or d.get("save_path") or d.get("type") or "checkpoints"
+        return cls(
+            name=name,
+            category=category,
+            repo_id=d.get("repo_id"),
+            filename=d.get("filename") or d.get("hf_filename"),
+            url=d.get("url") or None,
+            save_path=d.get("save_path"),
+            tiny=bool(d.get("tiny", False)),
+        )
+
+
+def resolve_download_url(info: "ModelInfo") -> str:
+    """Single source of truth for download URL construction.
+
+    Returns the direct URL for `info`, constructing a HuggingFace URL from
+    `repo_id + filename` if no explicit `url` is set. This is the ONLY place
+    in the codebase allowed to format `https://huggingface.co/{repo}/resolve/main/{f}`.
+
+    Raises:
+        ValueError: if neither `url` nor `(repo_id, filename)` are present.
+    """
+    if info.url:
+        return info.url
+    if info.repo_id and info.filename:
+        return f"https://huggingface.co/{info.repo_id}/resolve/main/{info.filename}"
+    raise ValueError(
+        f"ModelInfo {info.name!r} has no url and no (repo_id, filename) — "
+        "cannot resolve a download URL"
+    )
+
+
 # Model DB (from models_db.json)
 MODEL_DB = {}
 MODEL_DB_FILE = os.path.join(MANAGER_DIR, "models_db.json")
@@ -336,8 +411,22 @@ EMBEDDED_MODEL_URLS = {}
 POPULAR_MODELS = {}
 
 # NOT_FOUND cache - models that couldn't be found (avoid re-searching)
-NOT_FOUND_CACHE = set()
+# Format: {basename: timestamp_iso} — entries older than NOT_FOUND_TTL_DAYS are discarded on load.
+NOT_FOUND_CACHE = {}
 NOT_FOUND_CACHE_FILE = os.path.join(CACHE_DIR, "not_found_cache.json")
+NOT_FOUND_TTL_DAYS = 7
+
+# Diagnostic trace of the last check_model_in_db() call.
+# list of (stage_name, result_str) tuples, reset at the start of every call.
+# TODO: thread-local if ever parallelized — currently checker is called serially from StartupWorker.
+LAST_SEARCH_STAGES = []
+
+# F4: Per-model diagnostic stages, persisted across calls so the UI can look up
+# why a particular model matched/missed (LAST_SEARCH_STAGES is only the *last*
+# call — a single UI render sees 40+ calls and loses all but the final one).
+# Capped to avoid unbounded growth; oldest entry evicted on overflow.
+LAST_STAGES_BY_NAME = {}
+_LAST_STAGES_BY_NAME_CAP = 500
 
 # Model usage tracking (model_name -> [workflow_list])
 MODEL_USAGE_CACHE = {}
@@ -444,7 +533,31 @@ def write_extra_model_paths(paths_dict):
 
 def check_model_in_db(model_name):
     """Check if a model is in our MODEL_DB or External DB. Returns (in_db, info_dict).
-    
+
+    Thin wrapper around :func:`_check_model_in_db_impl` that, after the call
+    completes, snapshots ``LAST_SEARCH_STAGES`` into ``LAST_STAGES_BY_NAME[model_name]``
+    so the UI can surface per-model diagnostics (F4 — previously only the *last*
+    call's stages were observable, so 39/40 rows lost their trace).
+    """
+    try:
+        return _check_model_in_db_impl(model_name)
+    finally:
+        # Shallow-copy so later calls mutating LAST_SEARCH_STAGES don't corrupt
+        # this snapshot. Cap the dict to avoid unbounded growth across sessions.
+        try:
+            LAST_STAGES_BY_NAME[model_name] = list(LAST_SEARCH_STAGES)
+            if len(LAST_STAGES_BY_NAME) > _LAST_STAGES_BY_NAME_CAP:
+                # Pop oldest insertion(s). dict preserves insertion order (py3.7+).
+                _overflow = len(LAST_STAGES_BY_NAME) - _LAST_STAGES_BY_NAME_CAP
+                for _old in list(LAST_STAGES_BY_NAME.keys())[:_overflow]:
+                    LAST_STAGES_BY_NAME.pop(_old, None)
+        except Exception:
+            pass
+
+
+def _check_model_in_db_impl(model_name):
+    """Actual search pipeline — see :func:`check_model_in_db` docstring.
+
     Enhanced search priority chain (v6):
     0. EMBEDDED_MODEL_URLS (from workflow properties.models) - Most accurate
     1. Local MODEL_DB (models_db.json) - Exact match
@@ -457,16 +570,23 @@ def check_model_in_db(model_name):
     """
     logger.info(f"[Model Check] Looking for: {model_name}")
     basename = os.path.basename(model_name.replace("\\", "/"))
-    
-    # Skip NOT_FOUND cache
-    if basename in NOT_FOUND_CACHE:
-        logger.info(f"[Model Check] ✗ In NOT_FOUND cache: {basename}")
+
+    # Reset diagnostic trace at start of every call.
+    global LAST_SEARCH_STAGES
+    LAST_SEARCH_STAGES = []
+
+    # Skip NOT_FOUND cache (TTL-aware)
+    cached_age_days = _not_found_cache_age_days(basename)
+    if cached_age_days is not None:
+        logger.info(f"[Model Check] ✗ In NOT_FOUND cache (cached {cached_age_days} days ago): {basename}")
+        LAST_SEARCH_STAGES.append(("not_found_cache", f"hit age={cached_age_days}d"))
         return False, None
     
     # 0. Check EMBEDDED_MODEL_URLS (from workflow)
     if basename in EMBEDDED_MODEL_URLS:
         info = EMBEDDED_MODEL_URLS[basename]
         logger.info(f"[Model Check] ✓ Found in EMBEDDED_MODEL_URLS: {info['url'][:50]}...")
+        LAST_SEARCH_STAGES.append(("embedded", "hit"))
         return True, {
             "url": info["url"],
             "folder": info["directory"],
@@ -475,20 +595,37 @@ def check_model_in_db(model_name):
             "_confidence": CONFIDENCE_EXACT,
             "_method": "embedded"
         }
-    
+    LAST_SEARCH_STAGES.append(("embedded", "miss"))
+
     # 0.5. Check popular models registry (instant, no API)
     if model_name in POPULAR_MODELS:
         info = dict(POPULAR_MODELS[model_name]) if isinstance(POPULAR_MODELS[model_name], dict) else {"url": str(POPULAR_MODELS[model_name])}
         info.setdefault("_confidence", CONFIDENCE_EXACT)
         info.setdefault("_method", "popular_models")
         logger.info(f"[Model Check] ✓ Found in POPULAR_MODELS: {model_name}")
+        LAST_SEARCH_STAGES.append(("popular", "hit"))
         return True, info
     if basename != model_name and basename in POPULAR_MODELS:
         info = dict(POPULAR_MODELS[basename]) if isinstance(POPULAR_MODELS[basename], dict) else {"url": str(POPULAR_MODELS[basename])}
         info.setdefault("_confidence", CONFIDENCE_EXACT)
         info.setdefault("_method", "popular_models")
         logger.info(f"[Model Check] ✓ Found in POPULAR_MODELS (basename): {basename}")
+        LAST_SEARCH_STAGES.append(("popular", "hit"))
         return True, info
+    # F1: Case-insensitive fallback for POPULAR_MODELS. Build a lowercase index on the fly —
+    # POPULAR_MODELS is small (~dozens of entries) so rebuilding per-lookup is fine and
+    # avoids a global-cache invalidation problem if POPULAR_MODELS is ever mutated.
+    _popular_lower = {k.lower(): k for k in POPULAR_MODELS}
+    for _try_key in (basename.lower(), model_name.lower()):
+        _real_key = _popular_lower.get(_try_key)
+        if _real_key is not None:
+            info = dict(POPULAR_MODELS[_real_key]) if isinstance(POPULAR_MODELS[_real_key], dict) else {"url": str(POPULAR_MODELS[_real_key])}
+            info.setdefault("_confidence", CONFIDENCE_EXACT)
+            info.setdefault("_method", "popular_models")
+            logger.info(f"[Model Check] ✓ Found in POPULAR_MODELS (case-insensitive): {_try_key} → {_real_key}")
+            LAST_SEARCH_STAGES.append(("popular", "hit (case-insensitive)"))
+            return True, info
+    LAST_SEARCH_STAGES.append(("popular", "miss"))
 
     # 1. Local MODEL_DB Check (exact)
     if model_name in MODEL_DB:
@@ -496,26 +633,58 @@ def check_model_in_db(model_name):
         info = dict(MODEL_DB[model_name])
         info["_confidence"] = CONFIDENCE_EXACT
         info["_method"] = "exact"
+        LAST_SEARCH_STAGES.append(("exact", "hit"))
         return True, info
-    
+
     if basename in MODEL_DB:
         logger.info(f"[Model Check] ✓ Basename match in MODEL_DB: {basename}")
         info = dict(MODEL_DB[basename])
         info["_confidence"] = CONFIDENCE_EXACT
         info["_method"] = "exact"
+        LAST_SEARCH_STAGES.append(("exact", "hit"))
         return True, info
-    
+
     for key, val in MODEL_DB.items():
         if basename == os.path.basename(key):
             logger.info(f"[Model Check] ✓ Key basename match in MODEL_DB: {key}")
             info = dict(val)
             info["_confidence"] = CONFIDENCE_EXACT
             info["_method"] = "exact"
+            LAST_SEARCH_STAGES.append(("exact", "hit"))
             return True, info
-            
+
+    # F5: Case-insensitive fallback for MODEL_DB. Same rationale as POPULAR_MODELS —
+    # "Wan2.1_T2V.safetensors" vs "wan2.1_t2v.safetensors" shouldn't miss. Keep
+    # exact-case above as the fast path; only fall here if all exact attempts missed.
+    _model_name_lower = model_name.lower()
+    _basename_lower = basename.lower()
+    for key, val in MODEL_DB.items():
+        key_lower = key.lower()
+        key_base_lower = os.path.basename(key).lower()
+        if (key_lower == _model_name_lower
+                or key_lower == _basename_lower
+                or key_base_lower == _basename_lower):
+            logger.info(f"[Model Check] ✓ Case-insensitive match in MODEL_DB: {key}")
+            info = dict(val)
+            info["_confidence"] = CONFIDENCE_EXACT
+            info["_method"] = "exact_case_insensitive"
+            LAST_SEARCH_STAGES.append(("exact", "hit (case-insensitive)"))
+            return True, info
+    LAST_SEARCH_STAGES.append(("exact", "miss"))
+
     # 2. External MODEL_DB Check (model-list.json — 527+ models with direct URLs)
+    #
+    # F2: Add stem-level fallback so `.safetensors` ↔ `.sft` ↔ `.ckpt` don't miss.
+    # Many ComfyUI-Manager entries list the model with a different extension than
+    # the workflow reference uses (e.g. DB has `.sft`, workflow has `.safetensors`).
+    # Legitimate model extensions only — we do NOT match when either side has
+    # no extension (too many false positives like "clip_l" matching random files).
+    _MODEL_EXTS = {".safetensors", ".sft", ".ckpt", ".pt", ".bin"}
     if EXT_MODEL_DB:
         basename_lower = basename.lower()
+        stem, basename_ext = os.path.splitext(basename)
+        stem = stem.lower()
+        basename_ext = basename_ext.lower()
         for model in EXT_MODEL_DB:
             m_filename = model.get("filename", "")
             m_name = model.get("name", "")
@@ -526,6 +695,7 @@ def check_model_in_db(model_name):
                 # Use save_path for folder (reference format), fallback to type
                 folder = model.get("save_path", model.get("type", "checkpoints"))
                 logger.info(f"[Model Check] ✓ Found in EXT_MODEL_DB: {m_name} → {model.get('url', '')[:60]}")
+                LAST_SEARCH_STAGES.append(("ext_model_db", "hit"))
                 return True, {
                     "url": model.get("url"),
                     "filename": m_filename,
@@ -535,23 +705,64 @@ def check_model_in_db(model_name):
                     "_method": "ext_model_db"
                 }
 
-    # 3-4. Fuzzy Match + Alternative Format Names (NEW)
+        # F2: Stem-match fallback — same stem, legitimate model extension on both sides.
+        if basename_ext in _MODEL_EXTS and stem:
+            for model in EXT_MODEL_DB:
+                m_filename = model.get("filename", "") or ""
+                m_base = os.path.basename(m_filename)
+                if not m_base:
+                    continue
+                m_stem, m_ext = os.path.splitext(m_base)
+                m_stem = m_stem.lower()
+                m_ext = m_ext.lower()
+                if m_ext not in _MODEL_EXTS:
+                    continue
+                if m_stem != stem:
+                    continue
+                # Hit — same stem, differing (but valid) extension.
+                folder = model.get("save_path", model.get("type", "checkpoints"))
+                logger.info(
+                    f"[Model Check] ✓ Stem-match in EXT_MODEL_DB: {basename} → {m_base} "
+                    f"(ext {basename_ext}→{m_ext})"
+                )
+                LAST_SEARCH_STAGES.append(
+                    ("ext_model_db", f"stem-match ext-differ {basename_ext}→{m_ext}")
+                )
+                return True, {
+                    "url": model.get("url"),
+                    "filename": m_filename,
+                    "folder": folder,
+                    "description": f"{m_name} (ComfyUI Manager DB — matched by stem (ext differs))",
+                    "_confidence": CONFIDENCE_EXACT,
+                    "_method": "ext_model_db_stem",
+                    "_hint": "matched by stem (ext differs)",
+                }
+    LAST_SEARCH_STAGES.append(("ext_model_db", "miss"))
+
+    # 3-4. Fuzzy Match + Alternative Format Names
+    # F2: Lowered default fuzzy threshold 0.70 → 0.60 to improve recall
+    # (user-configurable via settings.search.fuzzy_threshold).
+    # fuzzy_matcher.py's own default (0.70) is left alone — we override at call site.
     settings = load_settings()
-    fuzzy_threshold = settings.get("search", {}).get("fuzzy_threshold", 0.70)
-    
+    fuzzy_threshold = settings.get("search", {}).get("fuzzy_threshold", 0.60)
+
     found, info, confidence, method = enhanced_model_search(
         model_name, MODEL_DB, EXT_MODEL_DB, fuzzy_threshold
     )
     if found:
-        logger.info(f"[Model Check] ✓ Enhanced match ({method}, {confidence*100:.0f}%): {model_name}")
+        matched_name = info.get("_matched_name") or info.get("filename") or info.get("name") or "?"
+        logger.info(f"[Model Check] ✓ Fuzzy match ({int(confidence*100)}%): {model_name} → {matched_name}")
+        LAST_SEARCH_STAGES.append(("fuzzy", f"hit {method} conf={int(confidence*100)}%"))
         return True, info
+    LAST_SEARCH_STAGES.append(("fuzzy", f"miss threshold={int(fuzzy_threshold*100)}%"))
 
     logger.info(f"[Model Check] Not in DBs, searching external APIs...")
-    
-    # 5. HuggingFace Search (existing)
+
+    # 5. HuggingFace Search (public API — no key required, always enabled)
     repo_id, filename = search_huggingface(model_name)
     if repo_id and filename:
         logger.info(f"[Model Check] ✓ Found on HuggingFace: {repo_id}/{filename}")
+        LAST_SEARCH_STAGES.append(("huggingface", "hit"))
         return True, {
             "repo_id": repo_id,
             "filename": filename,
@@ -560,65 +771,184 @@ def check_model_in_db(model_name):
             "_confidence": 0.85,
             "_method": "huggingface"
         }
-    
-    # 6. CivitAI Search (NEW)
+    LAST_SEARCH_STAGES.append(("huggingface", "miss"))
+
+    # 6. CivitAI Search
     enable_civitai = settings.get("search", {}).get("enable_civitai", True)
     if enable_civitai:
         civitai_key = get_api_key("civitai_api_key")
+        if not civitai_key:
+            # CivitAI search still works without a key but rate-limited; log that we're
+            # running un-authed so the user knows recall may suffer for gated models.
+            logger.info("[Model Check] CivitAI search: no API key configured (using anonymous — gated models will be skipped)")
+            LAST_SEARCH_STAGES.append(("civitai", "anonymous"))
         url, civitai_info = search_civitai(model_name, civitai_key)
         if url and civitai_info:
             civitai_info["folder"] = civitai_info.get("folder", guess_model_folder(basename))
             civitai_info.setdefault("_confidence", 0.75)
             civitai_info["_method"] = "civitai"
+            LAST_SEARCH_STAGES.append(("civitai", "hit"))
             return True, civitai_info
-    
-    # 7. Tavily AI Search (NEW, optional)
+        LAST_SEARCH_STAGES.append(("civitai", "miss"))
+    else:
+        logger.info("[Model Check] Skipping civitai search: disabled in settings")
+        LAST_SEARCH_STAGES.append(("civitai", "disabled"))
+
+    # 7. Tavily AI Search (optional — requires API key)
     enable_tavily = settings.get("search", {}).get("enable_tavily", True)
     if enable_tavily:
         tavily_key = get_api_key("tavily_api_key")
-        if tavily_key:
+        if not tavily_key:
+            logger.info("[Model Check] Skipping tavily search: no API key configured")
+            LAST_SEARCH_STAGES.append(("tavily", "skipped_no_key"))
+        else:
             url, tavily_info = search_tavily(model_name, tavily_key)
             if url and tavily_info:
                 tavily_info["folder"] = tavily_info.get("folder", guess_model_folder(basename))
                 tavily_info.setdefault("_confidence", 0.60)
                 tavily_info["_method"] = "tavily"
+                LAST_SEARCH_STAGES.append(("tavily", "hit"))
                 return True, tavily_info
+            LAST_SEARCH_STAGES.append(("tavily", "miss"))
+    else:
+        logger.info("[Model Check] Skipping tavily search: disabled in settings")
+        LAST_SEARCH_STAGES.append(("tavily", "disabled"))
     
-    # Cache as not found
-    NOT_FOUND_CACHE.add(basename)
+    # Cache as not found (TTL-aware: store iso timestamp)
+    NOT_FOUND_CACHE[basename] = datetime.now(timezone.utc).isoformat()
     _save_not_found_cache()
-    
+
     logger.info(f"[Model Check] ✗ Not found anywhere: {model_name}")
     return False, None
 
 
+def _not_found_cache_age_days(basename):
+    """Return age in whole days of a cache entry, or None if not cached / stale-expired.
+
+    Any entry older than NOT_FOUND_TTL_DAYS is lazily evicted here so the caller
+    sees a miss and will re-search.
+    """
+    ts = NOT_FOUND_CACHE.get(basename)
+    if ts is None:
+        return None
+    try:
+        cached_at = datetime.fromisoformat(ts)
+        if cached_at.tzinfo is None:
+            cached_at = cached_at.replace(tzinfo=timezone.utc)
+    except Exception:
+        # Corrupt entry — evict so we re-search.
+        NOT_FOUND_CACHE.pop(basename, None)
+        return None
+    age = datetime.now(timezone.utc) - cached_at
+    if age > timedelta(days=NOT_FOUND_TTL_DAYS):
+        NOT_FOUND_CACHE.pop(basename, None)
+        return None
+    return age.days
+
+
 def _save_not_found_cache():
-    """Persist NOT_FOUND_CACHE to disk."""
+    """Persist NOT_FOUND_CACHE (dict of basename->iso_timestamp) to disk."""
     try:
         with open(NOT_FOUND_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(list(NOT_FOUND_CACHE), f)
+            json.dump(NOT_FOUND_CACHE, f, indent=2)
     except Exception:
         pass
 
 
 def _load_not_found_cache():
-    """Load NOT_FOUND_CACHE from disk."""
+    """Load NOT_FOUND_CACHE from disk, discarding entries older than NOT_FOUND_TTL_DAYS.
+
+    Back-compat: if the on-disk file is a bare list (legacy format), migrate it by
+    seeding every entry with a timestamp of "right now" so it still expires in 7 days.
+    """
     global NOT_FOUND_CACHE
-    if os.path.exists(NOT_FOUND_CACHE_FILE):
-        try:
-            with open(NOT_FOUND_CACHE_FILE, 'r', encoding='utf-8') as f:
-                NOT_FOUND_CACHE = set(json.load(f))
-        except Exception:
-            NOT_FOUND_CACHE = set()
+    NOT_FOUND_CACHE = {}
+    if not os.path.exists(NOT_FOUND_CACHE_FILE):
+        return
+    try:
+        with open(NOT_FOUND_CACHE_FILE, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+    except Exception:
+        NOT_FOUND_CACHE = {}
+        return
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=NOT_FOUND_TTL_DAYS)
+    migrated = {}
+
+    if isinstance(raw, list):
+        # Legacy list format — migrate to dict with current timestamp.
+        for name in raw:
+            if isinstance(name, str):
+                migrated[name] = now_iso
+        logger.info(f"[Cache] Migrated NOT_FOUND cache from list→dict ({len(migrated)} entries)")
+    elif isinstance(raw, dict):
+        for name, ts in raw.items():
+            if not isinstance(name, str) or not isinstance(ts, str):
+                continue
+            try:
+                cached_at = datetime.fromisoformat(ts)
+                if cached_at.tzinfo is None:
+                    cached_at = cached_at.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if cached_at >= cutoff:
+                migrated[name] = ts
+        dropped = len(raw) - len(migrated)
+        if dropped > 0:
+            logger.info(f"[Cache] Dropped {dropped} NOT_FOUND entries older than {NOT_FOUND_TTL_DAYS} days")
+
+    NOT_FOUND_CACHE = migrated
+    # Persist the cleaned/migrated form.
+    _save_not_found_cache()
 
 
 def clear_not_found_cache():
-    """Clear the NOT_FOUND cache so models are re-searched."""
+    """Clear the NOT_FOUND cache so models are re-searched. UI-wired."""
     global NOT_FOUND_CACHE
-    NOT_FOUND_CACHE = set()
+    NOT_FOUND_CACHE = {}
     if os.path.exists(NOT_FOUND_CACHE_FILE):
-        os.remove(NOT_FOUND_CACHE_FILE)
+        try:
+            os.remove(NOT_FOUND_CACHE_FILE)
+        except Exception as e:
+            logger.warning(f"[Cache] Could not remove NOT_FOUND cache file: {e}")
     logger.info("[Cache] NOT_FOUND cache cleared")
+
+
+def research_missing_models(model_names, clear_cache=True, progress_cb=None):
+    """Re-run check_model_in_db for a batch of previously-failed models.
+
+    Wired to the UI "Re-search failed models" button.
+
+    Args:
+        model_names: list[str] of model filenames/paths to re-check.
+        clear_cache: if True (default), wipe NOT_FOUND_CACHE first so entries
+                     that would otherwise short-circuit get re-searched.
+        progress_cb: optional callable(idx, total, name, found: bool) for UI progress.
+
+    Returns:
+        dict[str, dict|None]: name -> info_dict (when found) or None (when still missing).
+    """
+    if clear_cache:
+        clear_not_found_cache()
+
+    results = {}
+    total = len(model_names)
+    for idx, name in enumerate(model_names):
+        try:
+            found, info = check_model_in_db(name)
+        except Exception as e:
+            logger.warning(f"[research_missing_models] {name} raised: {e}")
+            found, info = False, None
+        results[name] = info if found else None
+        if progress_cb:
+            try:
+                progress_cb(idx + 1, total, name, found)
+            except Exception as e:
+                logger.debug(f"[research_missing_models] progress_cb raised: {e}")
+    found_count = sum(1 for v in results.values() if v is not None)
+    logger.info(f"[research_missing_models] Resolved {found_count}/{total} previously-missing models")
+    return results
 
 
 
@@ -820,8 +1150,21 @@ def search_huggingface(model_name):
     """
     try:
         from huggingface_hub import HfApi
-        api = HfApi()
-        
+        # F3: Forward hf_token to HfApi so authenticated rate limits apply (and
+        # private/gated repos become visible). Falls back cleanly to anonymous
+        # if key lookup fails or no token is configured.
+        hf_token = None
+        try:
+            hf_token = get_api_key("hf_token") or None
+        except Exception:
+            hf_token = None
+        if hf_token:
+            api = HfApi(token=hf_token)
+            logger.info("HF search: using authenticated API")
+        else:
+            api = HfApi()
+            logger.info("HF search: using anonymous API (rate-limited)")
+
         basename = os.path.basename(model_name.replace("\\", "/"))
         
         # Priority repos to search first (common ComfyUI model sources)
@@ -1017,17 +1360,11 @@ def download_model(model_name, progress_callback=None, url=None, folder=None):
             return False, f"Model '{model_name}' not found — no download URL available"
     
     folder_key = info.get("folder", "checkpoints")
-    # Download destination priority:
-    # 1. Shared models folder (DSUComfyCG/models/) — preferred, all envs share this
-    # 2. EXTRA_MODEL_PATHS first entry (if configured via extra_model_paths.yaml)
-    # 3. Active env's ComfyUI/models/ — fallback
-    shared_path = os.path.join(get_shared_models_path(), folder_key)
-    if os.path.isdir(get_shared_models_path()):
-        target_dir = shared_path
-    elif folder_key in EXTRA_MODEL_PATHS and len(EXTRA_MODEL_PATHS[folder_key]) > 0:
-        target_dir = EXTRA_MODEL_PATHS[folder_key][0]
-    else:
-        target_dir = os.path.join(get_comfy_path(), "models", folder_key)
+    # Unified save/search path resolution — save to paths[0], search paths[0..-1].
+    # Shared folder is a project-root concept and should exist regardless of env install state.
+    search_paths = get_model_search_paths(folder_key, model_name=model_name)
+    target_dir = search_paths[0]
+    os.makedirs(target_dir, exist_ok=True)
     filename = os.path.basename(model_name.replace("\\", "/"))
     target_path = os.path.join(target_dir, filename)
     
@@ -1044,11 +1381,20 @@ def download_model(model_name, progress_callback=None, url=None, folder=None):
     # Create directory if needed
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     
-    url = info.get("url")
-    # If using huggingface_hub, we use their built-in download
-    repo_id = info.get("repo_id")
-    hf_filename = info.get("filename") or info.get("hf_filename")
-    
+    # Build a canonical ModelInfo and resolve the URL via the single helper.
+    # hf_hub_download remains preferred when available (better resume/auth/caching),
+    # but we always have a direct URL as fallback so a missing huggingface_hub
+    # module doesn't block the download.
+    model_info = ModelInfo.from_dict(info, name_fallback=model_name)
+    repo_id = model_info.repo_id
+    hf_filename = model_info.filename
+    try:
+        url = resolve_download_url(model_info)
+        if not info.get("url") and repo_id and hf_filename:
+            logger.info(f"[Download] Constructed HF URL from repo_id+filename: {url[:80]}...")
+    except ValueError:
+        url = None
+
     if repo_id and hf_filename:
         try:
             from huggingface_hub import hf_hub_download
@@ -1061,6 +1407,8 @@ def download_model(model_name, progress_callback=None, url=None, folder=None):
             )
             record_download(model_name, url or f"hf://{repo_id}/{hf_filename}", folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
             return True, f"Downloaded {filename}"
+        except ImportError:
+            logger.info("huggingface_hub not installed, using constructed HF URL via requests/aria2...")
         except Exception as e:
             logger.warning(f"huggingface_hub failed: {e}, trying direct URL...")
 
@@ -1142,12 +1490,30 @@ def download_model(model_name, progress_callback=None, url=None, folder=None):
                             progress_callback(downloaded, total_size)
                             last_reported = downloaded
 
-        # Rename .partial to final path on successful completion
-        if os.path.exists(target_path):
-            os.remove(target_path)
-        os.rename(partial_path, target_path)
+        # Rename .partial to final path on successful completion.
+        # Safety: verify .partial is non-empty before replacing target; os.replace
+        # is atomic on Windows and won't destroy target if the source is missing.
+        if not os.path.exists(partial_path):
+            return False, f"Download error: partial file missing at {partial_path}"
+        partial_size = os.path.getsize(partial_path)
+        if partial_size == 0:
+            os.remove(partial_path)
+            return False, "Download error: partial file is empty"
+        os.replace(partial_path, target_path)
 
-        record_download(model_name, url, folder_key, True, size_bytes=os.path.getsize(target_path) if os.path.exists(target_path) else 0)
+        # Post-download size sanity check: warn if the final file is suspiciously small.
+        # `tiny` opt-out comes from the ModelInfo built above (some legit files are <1KB).
+        # `size`-based tolerance check is deliberately NOT implemented here — ModelInfo
+        # doesn't carry a size field yet, so adding a speculative check would be dead code.
+        final_size = os.path.getsize(target_path) if os.path.exists(target_path) else 0
+        tiny_ok = model_info.tiny
+        if final_size < 1024 and not tiny_ok:
+            logger.warning(
+                f"[Download] {filename} is only {final_size} bytes — likely an error "
+                f"page or truncated download. Verify the file or the source URL."
+            )
+
+        record_download(model_name, url, folder_key, True, size_bytes=final_size)
         return True, f"Downloaded {filename}"
 
     except Exception as e:
@@ -1359,40 +1725,86 @@ def check_node_installed(node_type):
     return False, "Unknown", None
 
 
+def get_model_search_paths(category: str, model_name: str = "") -> list:
+    """Return ordered list of dirs to check for a model, highest priority first.
+
+    Order:
+      1. Shared models folder (DSUComfyCG/models/{category}/) — all envs share this
+      2. Active env's ComfyUI/models/{category}/
+      3. Equivalent directories under env local (text_encoders <-> clip, etc.)
+      4. EXTRA_MODEL_PATHS entries for this category (and, for search use, all categories)
+
+    Both `download_model` (save to paths[0]) and `check_model_installed`
+    (search paths[0..-1]) must share this helper to avoid the Shared/env-local
+    drift that plagued the download pipeline through b3d54ef.
+
+    IMPORTANT: the returned paths may not exist yet — this function does NOT
+    call `makedirs`. Callers that intend to SAVE a file (e.g. `download_model`
+    writing to paths[0]) MUST call `os.makedirs(target_dir, exist_ok=True)`
+    themselves. Callers that only READ (e.g. `check_model_installed`) should
+    skip non-existent paths.
+
+    Note: `read_extra_model_paths()` already absolutizes entries, so we do NOT
+    re-resolve relative paths here.
+    """
+    paths: list = []
+    shared_root = get_shared_models_path()
+    # 1. Shared (always included — even if dir doesn't exist yet, it's the canonical save target)
+    shared_path = os.path.join(shared_root, category) if category else shared_root
+    paths.append(shared_path)
+
+    # 2. Env-local models/{category}
+    models_root = get_models_path()
+    if models_root:
+        env_path = os.path.join(models_root, category) if category else models_root
+        if env_path not in paths:
+            paths.append(env_path)
+
+    # 3. Equivalent directories under env local (search only — these never become save targets)
+    if models_root and os.path.isdir(models_root):
+        parts = model_name.replace("\\", "/").split("/") if model_name else []
+        primary = parts[0] if len(parts) > 1 else category
+        if primary:
+            for ed in get_equivalent_dirs(primary):
+                eq_path = os.path.join(models_root, ed)
+                if eq_path not in paths:
+                    paths.append(eq_path)
+
+    # 4. EXTRA_MODEL_PATHS — prefer category-specific, then other categories as fallback
+    def _add_extra(key):
+        entries = EXTRA_MODEL_PATHS.get(key)
+        if not entries:
+            return
+        if isinstance(entries, list):
+            for ep in entries:
+                if ep not in paths:
+                    paths.append(ep)
+        else:
+            if entries not in paths:
+                paths.append(entries)
+
+    if category:
+        _add_extra(category)
+    for key in EXTRA_MODEL_PATHS.keys():
+        if key != category:
+            _add_extra(key)
+
+    return paths
+
+
 def check_model_installed(model_name):
     """Check if a model is installed. Returns (installed, folder/status, download_url).
-    
+
     Now also searches extra_model_paths.yaml directories.
     """
     # Get basename (without subfolder like Kijai_WAN/)
     basename = os.path.basename(model_name.replace("\\", "/"))
-    
-    # Search all model directories (shared models + env local + extra paths + equivalent dirs)
-    shared = get_shared_models_path()
-    search_paths = [shared, get_models_path()]
-    # Also search equivalent directories (e.g., text_encoders <-> clip)
-    models_root = get_models_path()
-    if models_root and os.path.isdir(models_root):
-        # Guess the folder from the model path and add equivalent dirs
-        parts = model_name.replace("\\", "/").split("/")
-        if len(parts) > 1:
-            equiv_dirs = get_equivalent_dirs(parts[0])
-            for ed in equiv_dirs:
-                eq_path = os.path.join(models_root, ed)
-                if os.path.isdir(eq_path) and eq_path not in search_paths:
-                    search_paths.append(eq_path)
-    for extra_paths in EXTRA_MODEL_PATHS.values():
-        if isinstance(extra_paths, list):
-            for ep in extra_paths:
-                if os.path.isabs(ep):
-                    search_paths.append(ep)
-                else:
-                    search_paths.append(os.path.join(BASE_DIR, ep))
-        else:
-            if os.path.isabs(extra_paths):
-                search_paths.append(extra_paths)
-            else:
-                search_paths.append(os.path.join(BASE_DIR, extra_paths))
+
+    # Derive category (top-level folder in model_name, e.g. 'loras/foo.safetensors' -> 'loras')
+    parts = model_name.replace("\\", "/").split("/")
+    category = parts[0] if len(parts) > 1 else ""
+
+    search_paths = get_model_search_paths(category, model_name=model_name)
     
     for search_path in search_paths:
         if not os.path.exists(search_path):
@@ -1600,11 +2012,14 @@ def install_node(git_url, enable_rollback=True):
             
             logger.info(f"Installing dependencies for {folder_name}...")
             python_path = get_python_path()
-            # Prefer uv, fallback to pip
+            # Prefer uv, fallback to pip.
+            # NOTE: dropped capture_output=True on the uv path so errors are visible
+            # in the console instead of silently falling through to pip (made
+            # debugging impossible). stderr now reaches the user.
             try:
-                subprocess.check_call([python_path, "-m", "uv", "pip", "install", "-r", req_path],
-                                     capture_output=True)
-            except (subprocess.CalledProcessError, FileNotFoundError):
+                subprocess.check_call([python_path, "-m", "uv", "pip", "install", "-r", req_path])
+            except (subprocess.CalledProcessError, FileNotFoundError) as uv_err:
+                logger.info(f"uv install failed ({uv_err}); falling back to pip.")
                 subprocess.check_call([python_path, "-m", "pip", "install", "-r", req_path])
             
             # Post-install check
@@ -2087,7 +2502,9 @@ def check_for_updates():
 
 def perform_update():
     """Perform git pull to update the app. Returns (success, message)."""
-    ensure_git_installed()
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        return False, f"Git required for update: {git_msg}"
     try:
         # Check if git is available
         result = subprocess.run(
@@ -2136,7 +2553,6 @@ def check_comfyui_version():
         "error": str or None
     }
     """
-    ensure_git_installed()
     result = {
         "installed": os.path.exists(get_comfy_path()),
         "current_commit": None,
@@ -2145,7 +2561,12 @@ def check_comfyui_version():
         "commits_behind": 0,
         "error": None
     }
-    
+
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        result["error"] = f"Git required: {git_msg}"
+        return result
+
     if not result["installed"]:
         result["error"] = "ComfyUI not installed"
         return result
@@ -2218,9 +2639,13 @@ def check_custom_nodes_updates():
         "error": str or None
     }]
     """
-    ensure_git_installed()
     results = []
-    
+
+    git_success, git_msg = ensure_git_installed(lambda m: logger.info(m))
+    if not git_success:
+        logger.warning(f"Git required for checking custom node updates: {git_msg}")
+        return results
+
     if not os.path.exists(get_custom_nodes_path()):
         return results
     

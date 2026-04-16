@@ -14,16 +14,45 @@ logger = logging.getLogger("ScanInstall")
 
 # Paths
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)  # DSUComfyCG/ (one level up from Helper/)
+PROJECT_ROOT = REPO_ROOT  # kept for backward compat within this file
 
-# Setup portable git
-git_portable = os.path.join(PROJECT_ROOT, "git_portable", "cmd")
+# Setup portable git (prepend git_portable/cmd to PATH if present)
+git_portable = os.path.join(REPO_ROOT, "git_portable", "cmd")
 if os.path.isdir(git_portable):
     os.environ["PATH"] = git_portable + os.pathsep + os.environ.get("PATH", "")
-WORKFLOWS_DIR = os.path.join(SCRIPT_DIR, "workflows")
+
+# Allow importing Manager.core.checker for active env + git fallback.
+# Mirror Manager/main.py which does: sys.path.insert(0, MANAGER_DIR)
+_MANAGER_DIR = os.path.join(REPO_ROOT, "Manager")
+if _MANAGER_DIR not in sys.path:
+    sys.path.insert(0, _MANAGER_DIR)
+
+def _resolve_comfy_path():
+    """Resolve ComfyUI path from active env via Manager.core.checker.
+    Falls back to failing loudly rather than silently creating empty folders."""
+    try:
+        from core.checker import get_active_env  # type: ignore
+        env = get_active_env() or {}
+        env_path = env.get("path", "")
+        if env_path:
+            # env path may be relative to REPO_ROOT or absolute
+            full = env_path if os.path.isabs(env_path) else os.path.join(REPO_ROOT, env_path)
+            full = os.path.normpath(full)
+            if os.path.isdir(full):
+                return full
+            logger.error(f"Active ComfyUI env path does not exist: {full}")
+        else:
+            logger.error("Active ComfyUI env has no 'path' field.")
+    except Exception as e:
+        logger.error(f"Could not import Manager.core.checker to resolve active env: {e}")
+    logger.error("Active ComfyUI env not found. Run Manager first.")
+    return None
+
+WORKFLOWS_DIR = os.path.join(REPO_ROOT, "workflows")
 CACHE_FILE = os.path.join(SCRIPT_DIR, "processed_workflows.txt")
-COMFY_PATH = os.path.join(SCRIPT_DIR, "ComfyUI")
-CUSTOM_NODES_PATH = os.path.join(COMFY_PATH, "custom_nodes")
+COMFY_PATH = _resolve_comfy_path()
+CUSTOM_NODES_PATH = os.path.join(COMFY_PATH, "custom_nodes") if COMFY_PATH else None
 
 # Node Database (expandable)
 NODE_DB = {
@@ -77,7 +106,10 @@ def get_missing_nodes(node_types):
     """Find missing nodes that need to be installed."""
     missing = {}
     processed_urls = set()
-    
+    if not CUSTOM_NODES_PATH:
+        logger.error("CUSTOM_NODES_PATH unresolved; cannot determine missing nodes.")
+        return missing
+
     for node_type in node_types:
         if node_type in NODE_DB:
             url = NODE_DB[node_type]
@@ -120,14 +152,35 @@ def _find_python_exe():
         return root_py
     return None
 
+def _ensure_git_available():
+    """Ensure git is on PATH; fall back to Manager's ensure_git_installed() if import succeeds."""
+    import shutil
+    if shutil.which("git"):
+        return True
+    try:
+        from core.checker import ensure_git_installed  # type: ignore
+        ok, msg = ensure_git_installed()
+        logger.info(f"ensure_git_installed: {msg}")
+        return ok
+    except Exception as e:
+        logger.error(f"Git not found and Manager.core.checker import failed: {e}")
+        return False
+
 def install_node(url):
     """Clone a node repository and install its requirements."""
+    if not CUSTOM_NODES_PATH:
+        logger.error("CUSTOM_NODES_PATH unresolved; cannot install node.")
+        return False
     repo_name = url.split("/")[-1].replace(".git", "")
     target_path = os.path.join(CUSTOM_NODES_PATH, repo_name)
 
     if os.path.exists(target_path):
         logger.info(f"{repo_name} already exists")
         return True
+
+    if not _ensure_git_available():
+        logger.error(f"Skipping {repo_name}: git unavailable.")
+        return False
 
     try:
         logger.info(f"Installing {repo_name}...")
@@ -155,12 +208,17 @@ def install_node(url):
         return False
 
 def main():
-    # Create workflows folder if not exists
-    if not os.path.exists(WORKFLOWS_DIR):
-        os.makedirs(WORKFLOWS_DIR)
-        logger.info("Created workflows folder")
+    # Fail loudly if workflows folder missing (don't silently create empty folder)
+    if not os.path.isdir(WORKFLOWS_DIR):
+        logger.error(f"Workflows folder not found at: {WORKFLOWS_DIR}")
+        logger.error("Expected <repo-root>/workflows/. Nothing to scan.")
         return
-    
+
+    # Fail loudly if ComfyUI env unresolved (get_missing_nodes / install_node would be no-ops)
+    if not COMFY_PATH or not CUSTOM_NODES_PATH:
+        logger.error("Active ComfyUI env not found. Run Manager first.")
+        return
+
     # Load cache
     processed = load_cache()
     

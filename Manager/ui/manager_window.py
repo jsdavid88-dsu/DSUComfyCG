@@ -26,15 +26,32 @@ from core.checker import (
     install_node, run_comfyui, install_comfyui, sync_workflows, fetch_node_db, NODE_DB,
     download_model, load_model_db, MODEL_DB,
     check_for_updates, perform_update, get_local_version,
-    check_comfyui_version, check_custom_nodes_updates, 
+    check_comfyui_version, check_custom_nodes_updates,
     update_comfyui, update_all_custom_nodes, get_system_health_report,
     save_url_to_model_db, guess_model_folder, check_model_installed,
     get_all_installed_models, get_unused_models,
     scan_all_workflows_for_models, clear_not_found_cache,
     get_models_path, read_extra_model_paths, write_extra_model_paths,
     ENVIRONMENTS, get_active_env, set_active_env,
-    auto_resolve_all
+    auto_resolve_all,
+    ModelInfo, resolve_download_url,
 )
+# Re-search integration — these are provided by core.checker (Agent X).
+# Guarded imports so the UI still loads if a symbol is missing mid-rollout.
+try:
+    from core.checker import research_missing_models  # type: ignore
+except ImportError:
+    research_missing_models = None  # type: ignore
+try:
+    from core.checker import LAST_SEARCH_STAGES  # type: ignore
+except ImportError:
+    LAST_SEARCH_STAGES = {}  # type: ignore
+# F4: per-model stage dict — keyed by model name, holds a list of (stage, result)
+# tuples so the UI can render why each row matched / missed.
+try:
+    from core.checker import LAST_STAGES_BY_NAME  # type: ignore
+except ImportError:
+    LAST_STAGES_BY_NAME = {}  # type: ignore
 from core.search_engines import load_settings, save_settings, get_api_key, set_api_key, advanced_search_tavily, get_cached_metadata, cache_model_metadata, get_download_history
 from core.aria2_downloader import is_aria2_available
 from ui.url_input_dialog import ModelUrlInputDialog
@@ -99,15 +116,20 @@ class StartupWorker(QThread):
             
             for model in deps["models"]:
                 if not model["installed"] and model["url"]:
-                    # url can be a dict (info from check_model_in_db) with "url" or "repo_id"+"filename"
+                    # url can be a dict (info from check_model_in_db) with "url" or "repo_id"+"filename",
+                    # or a bare URL string. Route both through resolve_download_url so URL
+                    # construction lives in exactly one place (core.checker).
                     raw = model["url"]
+                    url_str = ""
                     if isinstance(raw, dict):
-                        url_str = raw.get("url", "")
-                        # If no direct URL but has repo_id, construct HuggingFace URL
-                        if not url_str and raw.get("repo_id") and raw.get("filename"):
-                            url_str = f"https://huggingface.co/{raw['repo_id']}/resolve/main/{raw['filename']}"
-                    else:
-                        url_str = raw if isinstance(raw, str) else ""
+                        try:
+                            url_str = resolve_download_url(
+                                ModelInfo.from_dict(raw, name_fallback=model["name"])
+                            )
+                        except ValueError:
+                            url_str = ""
+                    elif isinstance(raw, str):
+                        url_str = raw
                     if url_str and model["name"] not in all_missing_models:
                         all_missing_models[model["name"]] = url_str
         
@@ -186,6 +208,33 @@ class AutoResolveWorker(QThread):
             self.progress_signal.emit(msg)
         resolved = auto_resolve_all(self.workflow_files, progress_cb=_progress)
         self.result_signal.emit(resolved)
+
+
+class ResearchMissingWorker(QThread):
+    """Background worker for re-searching missing model URLs with fresh cache."""
+    progress_signal = Signal(str)       # status message
+    result_signal = Signal(dict)        # {name: {"url": str, ...}}
+
+    def __init__(self, names, clear_cache=True):
+        super().__init__()
+        self.names = list(names)
+        self.clear_cache = clear_cache
+
+    def run(self):
+        if research_missing_models is None:
+            # Function not available — emit empty result
+            self.progress_signal.emit("research_missing_models unavailable")
+            self.result_signal.emit({})
+            return
+        try:
+            self.progress_signal.emit(f"Re-searching {len(self.names)} models...")
+            results = research_missing_models(self.names, clear_cache=self.clear_cache)
+            if not isinstance(results, dict):
+                results = {}
+            self.result_signal.emit(results)
+        except Exception as e:
+            self.progress_signal.emit(f"Re-search failed: {e}")
+            self.result_signal.emit({})
 
 
 class DownloadQueueWorker(QThread):
@@ -623,14 +672,65 @@ class ManagerWindow(QMainWindow):
         stat2, self.stat_existing = _make_stat("EXISTING", "#0d9488")
         stat3, self.stat_missing = _make_stat("MISSING", "#ef4444")
         stat4, self.stat_downloadable = _make_stat("DOWNLOADABLE", "#0d9488")
-        
+        stat5, self.stat_unresolved = _make_stat("UNRESOLVED", "#f59e0b")
+
         banner_layout.addLayout(stat1)
         banner_layout.addLayout(stat2)
         banner_layout.addLayout(stat3)
         banner_layout.addLayout(stat4)
+        banner_layout.addLayout(stat5)
         banner_layout.addStretch()
-        
+
         layout.addWidget(banner_frame)
+
+        # 2b. Missing Custom Nodes panel (UI-1) — appears above models table.
+        # Hidden when _startup_missing_nodes is empty.
+        self.missing_nodes_frame = QFrame()
+        self.missing_nodes_frame.setStyleSheet(
+            "QFrame { background-color: #fff7ed; border: 1px solid #fdba74; border-radius: 10px; }"
+        )
+        mn_layout = QVBoxLayout(self.missing_nodes_frame)
+        mn_layout.setContentsMargins(14, 10, 14, 10)
+        mn_layout.setSpacing(8)
+
+        mn_header = QHBoxLayout()
+        self.missing_nodes_title = QLabel("\u26a0 Missing Custom Nodes (0)")
+        self.missing_nodes_title.setStyleSheet(
+            "color: #9a3412; font-size: 14px; font-weight: bold; background: transparent; border: none;"
+        )
+        mn_header.addWidget(self.missing_nodes_title)
+        mn_header.addStretch()
+
+        self.install_all_nodes_btn = QPushButton("Install All Nodes")
+        self.install_all_nodes_btn.setCursor(Qt.PointingHandCursor)
+        self.install_all_nodes_btn.setStyleSheet(
+            "QPushButton { background-color: #ef4444; color: white; border: none; border-radius: 6px; "
+            "padding: 6px 14px; font-weight: bold; font-size: 12px; }"
+            "QPushButton:hover { background-color: #dc2626; }"
+        )
+        self.install_all_nodes_btn.clicked.connect(self._install_all_missing_nodes)
+        mn_header.addWidget(self.install_all_nodes_btn)
+        mn_layout.addLayout(mn_header)
+
+        self.missing_nodes_table = QTableWidget()
+        self.missing_nodes_table.setColumnCount(3)
+        self.missing_nodes_table.setHorizontalHeaderLabels(["Folder", "Install URL", "Action"])
+        self.missing_nodes_table.horizontalHeader().setStretchLastSection(False)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.missing_nodes_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.missing_nodes_table.verticalHeader().setVisible(False)
+        self.missing_nodes_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.missing_nodes_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.missing_nodes_table.setShowGrid(False)
+        self.missing_nodes_table.setMaximumHeight(180)
+        self.missing_nodes_table.setStyleSheet(
+            "QTableWidget { background: white; border: 1px solid #fed7aa; border-radius: 6px; }"
+        )
+        mn_layout.addWidget(self.missing_nodes_table)
+
+        layout.addWidget(self.missing_nodes_frame)
+        self.missing_nodes_frame.hide()  # Shown by _populate_missing_nodes_table when count > 0
         
         # 3. Table View
         self.models_table = QTableWidget()
@@ -650,7 +750,46 @@ class ManagerWindow(QMainWindow):
         self.models_table.setShowGrid(False)
         
         layout.addWidget(self.models_table, stretch=1)
-        
+
+        # 3b. Unresolved models banner (UI-2) — hidden by default, shown when count > 0.
+        self.unresolved_banner_frame = QFrame()
+        self.unresolved_banner_frame.setStyleSheet(
+            "QFrame { background-color: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; }"
+        )
+        ub_layout = QHBoxLayout(self.unresolved_banner_frame)
+        ub_layout.setContentsMargins(14, 10, 14, 10)
+        ub_layout.setSpacing(12)
+
+        self.unresolved_banner_label = QLabel("\u26a0 0 models could not be auto-resolved.")
+        self.unresolved_banner_label.setStyleSheet(
+            "color: #92400e; font-size: 13px; font-weight: bold; background: transparent; border: none;"
+        )
+        ub_layout.addWidget(self.unresolved_banner_label, stretch=1)
+
+        self.research_btn = QPushButton("Re-search with fresh cache")
+        self.research_btn.setCursor(Qt.PointingHandCursor)
+        self.research_btn.setStyleSheet(
+            "QPushButton { background-color: #f59e0b; color: white; border: none; border-radius: 6px; "
+            "padding: 6px 14px; font-weight: bold; font-size: 12px; }"
+            "QPushButton:hover { background-color: #d97706; }"
+            "QPushButton:disabled { background-color: #fcd34d; color: #92400e; }"
+        )
+        self.research_btn.clicked.connect(self._on_research_missing_clicked)
+        ub_layout.addWidget(self.research_btn)
+
+        self.add_urls_btn = QPushButton("Add URLs manually")
+        self.add_urls_btn.setCursor(Qt.PointingHandCursor)
+        self.add_urls_btn.setStyleSheet(
+            "QPushButton { background-color: #3b82f6; color: white; border: none; border-radius: 6px; "
+            "padding: 6px 14px; font-weight: bold; font-size: 12px; }"
+            "QPushButton:hover { background-color: #2563eb; }"
+        )
+        self.add_urls_btn.clicked.connect(self._on_add_urls_manually_clicked)
+        ub_layout.addWidget(self.add_urls_btn)
+
+        layout.addWidget(self.unresolved_banner_frame)
+        self.unresolved_banner_frame.hide()
+
         # 4. Bottom Panel (Totals + Download Progress)
         bottom_layout = QHBoxLayout()
         
@@ -1021,23 +1160,50 @@ class ManagerWindow(QMainWindow):
             QLineEdit:focus { border-color: #7aa2f7; }
         """
         
+        help_link_style = "color: #64748b; font-size: 11px; background: transparent; border: none;"
+
+        def _wrap_with_help(line_edit: QLineEdit, help_html: str) -> QWidget:
+            container = QWidget()
+            v = QVBoxLayout(container)
+            v.setContentsMargins(0, 0, 0, 0)
+            v.setSpacing(4)
+            v.addWidget(line_edit)
+            help_label = QLabel(help_html)
+            help_label.setStyleSheet(help_link_style)
+            help_label.setOpenExternalLinks(True)
+            help_label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+            v.addWidget(help_label)
+            return container
+
         self.hf_token_input = QLineEdit()
         self.hf_token_input.setPlaceholderText("hf_...")
         self.hf_token_input.setEchoMode(QLineEdit.Password)
         self.hf_token_input.setStyleSheet(input_style)
-        api_layout.addRow(QLabel("HuggingFace Token:"), self.hf_token_input)
-        
+        hf_row = _wrap_with_help(
+            self.hf_token_input,
+            '<a href="https://huggingface.co/settings/tokens" style="color:#7aa2f7; text-decoration:none;">🔗 토큰 발급 받기 (Gated 모델용 - Flux, SD3 등 필요)</a>',
+        )
+        api_layout.addRow(QLabel("HuggingFace Token:"), hf_row)
+
         self.civitai_key_input = QLineEdit()
-        self.civitai_key_input.setPlaceholderText("선택사항 - rate limit 해제용")
+        self.civitai_key_input.setPlaceholderText("CivitAI 다운로드에 필요 - API 키 발급 후 입력")
         self.civitai_key_input.setEchoMode(QLineEdit.Password)
         self.civitai_key_input.setStyleSheet(input_style)
-        api_layout.addRow(QLabel("CivitAI API Key:"), self.civitai_key_input)
-        
+        civitai_row = _wrap_with_help(
+            self.civitai_key_input,
+            '<a href="https://civitai.com/user/account" style="color:#7aa2f7; text-decoration:none;">🔗 API 키 발급 받기 (CivitAI 다운로드 필수)</a>',
+        )
+        api_layout.addRow(QLabel("CivitAI API Key:"), civitai_row)
+
         self.tavily_key_input = QLineEdit()
         self.tavily_key_input.setPlaceholderText("선택사항 - AI 검색용")
         self.tavily_key_input.setEchoMode(QLineEdit.Password)
         self.tavily_key_input.setStyleSheet(input_style)
-        api_layout.addRow(QLabel("Tavily API Key:"), self.tavily_key_input)
+        tavily_row = _wrap_with_help(
+            self.tavily_key_input,
+            '<a href="https://tavily.com" style="color:#7aa2f7; text-decoration:none;">🔗 API 키 발급 받기 (선택 - AI 고급 검색)</a>',
+        )
+        api_layout.addRow(QLabel("Tavily API Key:"), tavily_row)
         
         layout.addWidget(api_group)
         
@@ -1711,6 +1877,9 @@ class ManagerWindow(QMainWindow):
         self._startup_missing_nodes = results["missing_nodes"]  # list of (url, folder)
         self._startup_missing_models = results["missing_models"]  # list of (name, url)
 
+        # Surface the missing nodes in a dedicated table (UI-1)
+        self._populate_missing_nodes_table()
+
         if n_nodes > 0 or n_models > 0:
             self.install_all_btn.show()
             self.install_all_btn.setText(f"⚡ 1-Click Install All ({n_nodes} nodes, {n_models} models)")
@@ -1755,40 +1924,74 @@ class ManagerWindow(QMainWindow):
         self._update_worker.start()
     
     def handle_update(self):
-        """Handle update button click."""
+        """Handle update button click. Pulls from GitHub and auto-restarts via DSU_Manager.bat."""
         reply = QMessageBox.question(
             self,
-            "Update DSUComfyCG",
-            "This will update DSUComfyCG Manager from GitHub.\n\n"
-            "The app will need to restart after updating.\n\n"
-            "Continue?",
+            "DSUComfyCG 업데이트",
+            "GitHub에서 Manager를 업데이트합니다.\n\n"
+            "업데이트 완료 후 앱이 자동으로 재시작됩니다.\n\n"
+            "진행할까요?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
-        
-        if reply == QMessageBox.Yes:
-            self.update_btn.setEnabled(False)
-            self.update_btn.setText("Updating...")
-            QApplication.processEvents()
-            
-            success, message = perform_update()
-            
-            if success:
-                QMessageBox.information(self, "Update Complete", message)
-                # Suggest restart
-                restart_reply = QMessageBox.question(
-                    self,
-                    "Restart Required",
-                    "Update complete! Restart the app to apply changes?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes
+
+        if reply != QMessageBox.Yes:
+            return
+
+        self.update_btn.setEnabled(False)
+        self.update_btn.setText("Updating...")
+        QApplication.processEvents()
+
+        success, message = perform_update()
+
+        if not success:
+            QMessageBox.warning(self, "업데이트 실패", message)
+            self.update_btn.setEnabled(True)
+            self.update_btn.setText("🔄 Update Available")
+            return
+
+        # Auto-restart: launch DSU_Manager.bat as detached process, then quit.
+        # The bat wrapper handles __pycache__ clear, pip deps, and relaunch.
+        import subprocess
+        from core.checker import BASE_DIR
+        bat_path = os.path.join(BASE_DIR, "DSU_Manager.bat")
+
+        if not os.path.exists(bat_path):
+            QMessageBox.information(
+                self, "업데이트 완료",
+                f"{message}\n\nDSU_Manager.bat을 찾지 못해 자동 재시작을 못했습니다.\n"
+                f"수동으로 DSU_Manager.bat을 다시 실행해 주세요."
+            )
+            QApplication.quit()
+            return
+
+        try:
+            # Windows: detached process, new console, so parent can exit cleanly.
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = (
+                    subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP
+                    | subprocess.CREATE_NEW_CONSOLE
                 )
-                if restart_reply == QMessageBox.Yes:
-                    QApplication.quit()
-            else:
-                QMessageBox.warning(self, "Update Failed", message)
-                self.update_btn.setEnabled(True)
-                self.update_btn.setText("🔄 Update Available")
+            subprocess.Popen(
+                ["cmd", "/c", "start", "", bat_path],
+                cwd=BASE_DIR,
+                creationflags=creationflags,
+                close_fds=True,
+            )
+        except Exception as e:
+            QMessageBox.warning(
+                self, "재시작 실패",
+                f"업데이트는 성공했지만 자동 재시작에 실패했습니다.\n수동 재실행 필요: {e}"
+            )
+            QApplication.quit()
+            return
+
+        # Brief confirmation, then quit. New instance is already launching.
+        self.status_bar.showMessage("업데이트 완료 — 재시작 중...")
+        QApplication.processEvents()
+        QApplication.quit()
     
     def refresh_workflows(self):
         # Delegate to the new Tabular UI workflows table
@@ -1832,11 +2035,13 @@ class ManagerWindow(QMainWindow):
         
         # 1. Collect all models from MODEL_DB
         combined_models = {}
-        for name, url in MODEL_DB.items():
-            if isinstance(url, dict):
-                url_str = url.get("url", "")
-            else:
-                url_str = url
+        for name, entry in MODEL_DB.items():
+            # Most MODEL_DB entries are {repo_id, filename} with no explicit url —
+            # resolve_download_url constructs the HF URL so the Source column is populated.
+            try:
+                url_str = resolve_download_url(ModelInfo.from_dict(entry, name_fallback=name))
+            except ValueError:
+                url_str = ""
             combined_models[name] = {"url": url_str, "folder": guess_model_folder(name)}
             
         # 2. Add all models used in all local workflows
@@ -1855,17 +2060,19 @@ class ManagerWindow(QMainWindow):
                     if not url:
                         in_db, info = check_model_in_db(m)
                         if in_db and info and isinstance(info, dict):
-                            url = info.get("url", "")
-                            # Construct URL from repo_id if no direct url
-                            if not url and info.get("repo_id") and info.get("filename"):
-                                url = f"https://huggingface.co/{info['repo_id']}/resolve/main/{info['filename']}"
+                            try:
+                                url = resolve_download_url(ModelInfo.from_dict(info, name_fallback=m))
+                            except ValueError:
+                                url = ""
                     combined_models[m] = {"url": url, "folder": guess_model_folder(m)}
                     
         total = len(combined_models)
         existing = 0
         missing = 0
         downloadable = 0
-        
+        unresolved = 0
+        unresolved_names = []
+
         for i, (name, data) in enumerate(combined_models.items()):
             folder = data["folder"]
             url = data["url"]
@@ -1916,6 +2123,43 @@ class ManagerWindow(QMainWindow):
             item_source = QTableWidgetItem(source_text + confidence_text)
             if url:
                 item_source.setForeground(QColor("#3b82f6"))
+            else:
+                # Track unresolved (no URL) models — only MISSING ones actually need URLs,
+                # but we surface any no-URL row so the user can still add one.
+                if not is_installed:
+                    unresolved += 1
+                    unresolved_names.append(name)
+
+            # UI-3 / F4: Source tooltip — pull per-model diagnostic from
+            # checker.LAST_STAGES_BY_NAME (dict keyed by model name, value is
+            # a list of (stage, result) tuples). Previously we read from
+            # LAST_SEARCH_STAGES which only held the *last* call's trace, so
+            # 39/40 rows silently fell through to the generic fallback.
+            stage_info = None
+            try:
+                stage_info = LAST_STAGES_BY_NAME.get(name) if LAST_STAGES_BY_NAME else None
+            except Exception:
+                stage_info = None
+            if stage_info:
+                # Expected: list of (stage, result) tuples — format one per line.
+                if isinstance(stage_info, list):
+                    parts = []
+                    for entry in stage_info:
+                        if isinstance(entry, tuple) and len(entry) == 2:
+                            parts.append(f"{entry[0]}: {entry[1]}")
+                        else:
+                            parts.append(str(entry))
+                    item_source.setToolTip("\n".join(parts))
+                elif isinstance(stage_info, dict):
+                    parts = [f"{k}: {v}" for k, v in stage_info.items()]
+                    item_source.setToolTip("\n".join(parts))
+                else:
+                    item_source.setToolTip(str(stage_info))
+            elif not url:
+                item_source.setToolTip("No match in MODEL_DB / HuggingFace / CivitAI. Provide a URL manually or re-search.")
+            else:
+                item_source.setToolTip(source_text)
+
             self.models_table.setItem(i, 4, item_source)
             
             # Column 5: Action Buttons
@@ -1953,13 +2197,200 @@ class ManagerWindow(QMainWindow):
             self.models_table.setCellWidget(i, 5, action_widget)
             
             item_name.setToolTip(name)
-            item_source.setToolTip(source_text)
 
         self.stat_total.setText(str(total))
         self.stat_existing.setText(str(existing))
         self.stat_missing.setText(str(missing))
         self.stat_downloadable.setText(str(downloadable))
+        if hasattr(self, "stat_unresolved"):
+            self.stat_unresolved.setText(str(unresolved))
         self.table_footer.setText(f"Total: {total} | Existing: {existing} | Missing: {missing}")
+
+        # Cache unresolved names so the re-search / manual-add buttons can act on them.
+        self._unresolved_model_names = unresolved_names
+
+        # Toggle the yellow unresolved banner
+        if hasattr(self, "unresolved_banner_frame"):
+            if unresolved > 0:
+                self.unresolved_banner_label.setText(
+                    f"\u26a0 {unresolved} models could not be auto-resolved."
+                )
+                self.unresolved_banner_frame.show()
+                # Disable re-search if the backend helper isn't available yet
+                self.research_btn.setEnabled(research_missing_models is not None)
+                if research_missing_models is None:
+                    self.research_btn.setToolTip(
+                        "research_missing_models not yet available from core.checker"
+                    )
+                else:
+                    self.research_btn.setToolTip(
+                        "Clear NOT_FOUND cache and re-search all unresolved model URLs"
+                    )
+            else:
+                self.unresolved_banner_frame.hide()
+
+    # ------------------------------------------------------------------
+    # Missing-nodes surface (UI-1)
+    # ------------------------------------------------------------------
+    def _populate_missing_nodes_table(self):
+        """Populate the Missing Custom Nodes table from self._startup_missing_nodes.
+
+        Data shape: list of (url, folder) as stored by StartupWorker.
+        Hides the frame when the list is empty.
+        """
+        missing = getattr(self, "_startup_missing_nodes", []) or []
+        if not hasattr(self, "missing_nodes_table"):
+            return  # tab not built yet
+
+        self.missing_nodes_table.setRowCount(0)
+        count = len(missing)
+        self.missing_nodes_title.setText(f"\u26a0 Missing Custom Nodes ({count})")
+
+        if count == 0:
+            self.missing_nodes_frame.hide()
+            return
+
+        self.missing_nodes_frame.show()
+        for i, (url, folder) in enumerate(missing):
+            self.missing_nodes_table.insertRow(i)
+
+            folder_item = QTableWidgetItem(folder or "(unknown)")
+            folder_item.setForeground(QColor("#1e293b"))
+            f = folder_item.font(); f.setBold(True); folder_item.setFont(f)
+            folder_item.setToolTip(folder or "")
+            self.missing_nodes_table.setItem(i, 0, folder_item)
+
+            # Elide long URLs visually via tooltip
+            display_url = url or ""
+            if len(display_url) > 80:
+                display_url_short = display_url[:77] + "..."
+            else:
+                display_url_short = display_url
+            url_item = QTableWidgetItem(display_url_short)
+            url_item.setForeground(QColor("#3b82f6"))
+            url_item.setToolTip(url or "")
+            self.missing_nodes_table.setItem(i, 1, url_item)
+
+            # Action — per-row Install button that calls the queue system
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(2, 2, 2, 2)
+            install_btn = QPushButton("Install")
+            install_btn.setCursor(Qt.PointingHandCursor)
+            install_btn.setStyleSheet(
+                "QPushButton { background-color: #10b981; color: white; border: none; "
+                "border-radius: 4px; padding: 4px 10px; font-weight: bold; font-size: 11px; }"
+                "QPushButton:hover { background-color: #059669; }"
+            )
+            install_btn.clicked.connect(
+                lambda _c, u=url, n=folder: self._install_single_missing_node(u, n)
+            )
+            action_layout.addWidget(install_btn)
+            self.missing_nodes_table.setCellWidget(i, 2, action_widget)
+
+    def _install_single_missing_node(self, url, folder):
+        """Queue a single missing node for install (re-uses existing queue system)."""
+        if not url:
+            return
+        try:
+            self.add_node_to_queue(url, folder or url)
+        except Exception:
+            # add_node_to_queue expects (url, name)
+            if (url, folder) not in getattr(self, "queue_nodes", []):
+                self.queue_nodes.append((url, folder))
+        self.start_queue_download()
+
+    def _install_all_missing_nodes(self):
+        """Queue all missing custom nodes and kick off the download queue."""
+        missing = getattr(self, "_startup_missing_nodes", []) or []
+        if not missing:
+            QMessageBox.information(
+                self, "Install All Nodes", "No missing custom nodes to install."
+            )
+            return
+        added = 0
+        for url, folder in missing:
+            if (url, folder) not in self.queue_nodes:
+                self.queue_nodes.append((url, folder))
+                added += 1
+        if added > 0:
+            self.status_bar.showMessage(f"Queued {added} missing nodes for install.")
+            self.start_queue_download()
+        else:
+            QMessageBox.information(
+                self, "Install All Nodes", "All missing nodes are already queued."
+            )
+
+    # ------------------------------------------------------------------
+    # Re-search unresolved models (UI-2)
+    # ------------------------------------------------------------------
+    def _on_research_missing_clicked(self):
+        """Trigger a background re-search of all unresolved model URLs with fresh cache."""
+        names = getattr(self, "_unresolved_model_names", []) or []
+        if not names:
+            QMessageBox.information(
+                self, "Re-search", "No unresolved models to re-search."
+            )
+            return
+        if research_missing_models is None:
+            QMessageBox.warning(
+                self,
+                "Re-search unavailable",
+                "research_missing_models() is not available in core.checker yet.",
+            )
+            return
+
+        self.research_btn.setEnabled(False)
+        self.research_btn.setText("Re-searching...")
+        self.status_bar.showMessage(f"Re-searching {len(names)} unresolved models...")
+
+        self._research_worker = ResearchMissingWorker(names, clear_cache=True)
+        self._research_worker.progress_signal.connect(
+            lambda m: self.status_bar.showMessage(m)
+        )
+        self._research_worker.result_signal.connect(self._on_research_missing_done)
+        self._research_worker.start()
+
+    def _on_research_missing_done(self, results):
+        """Handle re-search results. `results` is {name: {url, ...}} or similar."""
+        self.research_btn.setEnabled(True)
+        self.research_btn.setText("Re-search with fresh cache")
+
+        found = 0
+        if isinstance(results, dict):
+            for _name, info in results.items():
+                if isinstance(info, dict) and info.get("url"):
+                    found += 1
+                elif isinstance(info, str) and info:
+                    found += 1
+
+        self.status_bar.showMessage(
+            f"Re-search finished: {found}/{len(results) if results else 0} URLs recovered."
+        )
+        # Repopulate the table to pick up any newly-saved URLs / cache entries
+        self.populate_all_models_table()
+
+        QMessageBox.information(
+            self,
+            "Re-search Complete",
+            f"Re-searched unresolved models.\nURLs recovered: {found}\n\n"
+            "The Workflow Models table has been refreshed.",
+        )
+
+    def _on_add_urls_manually_clicked(self):
+        """Open the URL input dialog for each unresolved model (sequential bulk mode)."""
+        names = list(getattr(self, "_unresolved_model_names", []) or [])
+        if not names:
+            QMessageBox.information(
+                self, "Add URLs", "No unresolved models needing a manual URL."
+            )
+            return
+        # Open for the first unresolved; existing show_url_input_dialog pattern handles
+        # one-at-a-time. Users can re-click the button to iterate through the list.
+        first = names[0]
+        self.show_url_input_dialog(first)
+        # Refresh to pick up any DB additions
+        self.populate_all_models_table()
 
     def install_all_missing(self):
         """1-Click Install All — queue ALL missing nodes and models from startup scan."""
